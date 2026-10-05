@@ -184,6 +184,7 @@ export function plannedOption(iso, slotId) {
 /** Testo breve di un pasto segnato, es. "Uova + carbo" o "Ricotta + 2 gallette…". */
 export function mealLabel(meal) {
   if (!meal) return '';
+  if (isCheatMeal(meal) && !meal.category && !meal.option) return 'Sgarro';
   if (meal.category) return `${categoryLabel(meal.category)}${meal.carbo ? ' + carbo' : ''}`;
   if (meal.option) return meal.optionLabel || OTHER_OPTION.label;
   return 'Come da piano';
@@ -213,8 +214,10 @@ export function categoryCounts(days) {
   const counts = Object.fromEntries(CATEGORIES.map((c) => [c.id, 0]));
   for (const d of days) {
     for (const slot of ['pranzo', 'cena']) {
-      const cat = d?.meals?.[slot]?.category;
-      if (cat && cat in counts) counts[cat]++;
+      const meal = d?.meals?.[slot];
+      // Un pasto segnato come sgarro non conta nelle categorie
+      if (!meal || isCheatMeal(meal)) continue;
+      if (meal.category && meal.category in counts) counts[meal.category]++;
     }
   }
   return counts;

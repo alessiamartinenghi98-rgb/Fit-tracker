@@ -247,8 +247,8 @@ function mealCard(slot, planned, logged, future) {
     if (logged.category) tags.push(`<span class="cat-chip solid">${esc(categoryLabel(logged.category))}</span>`);
     if (logged.option) tags.push(`<span class="cat-chip solid wrap">${esc(logged.optionLabel || OTHER_OPTION.label)}</span>`);
     if (logged.carbo) tags.push('<span class="cat-chip carb">+ carbo</span>');
-    // Pasti segnati prima delle opzioni: solo "Come da piano"
-    if (!logged.category && !logged.option && !logged.note) tags.push('<span class="cat-chip solid">Come da piano</span>');
+    // Pasti segnati prima delle opzioni: solo "Come da piano" (mai per uno sgarro)
+    if (!logged.category && !logged.option && !logged.note && !isCheatMeal(logged)) tags.push('<span class="cat-chip solid">Come da piano</span>');
     body = `
       <div class="meal-logged">
         ${tags.length ? `<div class="meal-tags">${tags.join('')}</div>` : ''}
@@ -367,13 +367,13 @@ function openMealSheet(slotId) {
         ${icon('clipboard-list')}<span>Piano: ${esc(slot.main ? planned.text : planned)}</span>
       </div>
       ${slot.main ? `
-        <div class="field">
+        <div class="field" data-what ${draft.cheat ? 'hidden' : ''}>
           <span class="field-label">Cosa hai mangiato</span>
           <div class="chips" data-cats>
             ${CATEGORIES.map((c) => `<button class="chip ${draft.category === c.id ? 'active' : ''}" data-cat="${c.id}">${esc(c.label)}</button>`).join('')}
           </div>
         </div>` : `
-        <div class="field">
+        <div class="field" data-what ${draft.cheat ? 'hidden' : ''}>
           <span class="field-label">Cosa hai mangiato</span>
           <div class="chips stack" data-options>
             ${options.map((o) => `<button class="chip ${draft.option === o.id ? 'active' : ''}" data-opt="${esc(o.id)}">${esc(o.label)}</button>`).join('')}
@@ -386,7 +386,7 @@ function openMealSheet(slotId) {
       </label>
       <div class="list switch-list">
         ${slot.main ? switchRow('carbo', '+ carbo', 'Una sola porzione al giorno') : ''}
-        ${switchRow('cheat', 'Segna come sgarro', draft.category === 'libero' ? 'Il pasto libero non conta come sgarro' : 'La giornata diventa sgarro', 'danger')}
+        ${switchRow('cheat', 'Segna come sgarro', 'La giornata diventa sgarro · non conta nelle categorie', 'danger')}
       </div>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-save>${icon('check')} ${existing ? 'Salva modifiche' : 'Segna pasto'}</button>
@@ -396,15 +396,23 @@ function openMealSheet(slotId) {
 
   const body = s.body;
   const cheatInput = $('[data-k="cheat"]', body);
-  const syncCheat = () => {
-    // Con il pasto libero l'interruttore sgarro non ha effetto
-    const free = draft.category === 'libero';
-    cheatInput.disabled = free;
-    if (free) cheatInput.checked = false;
-    const sub = $('[data-sub-cheat]', body);
-    if (sub) sub.textContent = free ? 'Il pasto libero non conta come sgarro' : 'La giornata diventa sgarro';
-  };
-  syncCheat();
+  const whatField = $('[data-what]', body);
+  // Sgarro: non serve scegliere cosa hai mangiato, basta (se vuoi) scriverlo.
+  // Spegnendo lo sgarro ricompare la lista, con la scelta del piano.
+  cheatInput.addEventListener('change', () => {
+    draft.cheat = cheatInput.checked;
+    whatField.hidden = draft.cheat;
+    if (!draft.cheat) {
+      if (slot.main && !draft.category) {
+        draft.category = planned.category;
+        body.querySelectorAll('[data-cat]').forEach((c) => c.classList.toggle('active', c.dataset.cat === draft.category));
+      }
+      if (!slot.main && !draft.option) {
+        draft.option = plannedOption(date, slotId)?.id || null;
+        body.querySelectorAll('[data-opt]').forEach((c) => c.classList.toggle('active', c.dataset.opt === draft.option));
+      }
+    }
+  });
 
   $('[data-options]', body)?.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-opt]');
@@ -421,21 +429,27 @@ function openMealSheet(slotId) {
     draft.category = chip.dataset.cat;
     body.querySelectorAll('[data-cat]').forEach((c) => c.classList.toggle('active', c === chip));
     haptic(5);
-    syncCheat();
   });
 
   $('[data-save]', body).addEventListener('click', async () => {
-    if (slot.main && !draft.category) return toast('Scegli la categoria', { error: true });
-    if (!slot.main && !draft.option) return toast('Scegli cosa hai mangiato', { error: true });
-    const chosen = options.find((o) => o.id === draft.option);
-    const meal = {
-      ...(slot.main
-        ? { category: draft.category, carbo: $('[data-k="carbo"]', body).checked }
-        : { option: draft.option, optionLabel: chosen ? chosen.label : OTHER_OPTION.label }),
-      note: $('[data-note]', body).value.trim(),
-      cheat: draft.category === 'libero' ? false : cheatInput.checked,
-      at: existing?.at || Date.now(),
-    };
+    const cheat = cheatInput.checked;
+    const note = $('[data-note]', body).value.trim();
+    const at = existing?.at || Date.now();
+    let meal;
+    if (cheat) {
+      // Pasto sgarro: senza categoria o opzione, conta solo per lo stato della giornata
+      meal = { cheat: true, note, at, ...(slot.main ? { carbo: $('[data-k="carbo"]', body).checked } : {}) };
+    } else {
+      if (slot.main && !draft.category) return toast('Scegli la categoria', { error: true });
+      if (!slot.main && !draft.option) return toast('Scegli cosa hai mangiato', { error: true });
+      const chosen = options.find((o) => o.id === draft.option);
+      meal = {
+        ...(slot.main
+          ? { category: draft.category, carbo: $('[data-k="carbo"]', body).checked }
+          : { option: draft.option, optionLabel: chosen ? chosen.label : OTHER_OPTION.label }),
+        note, cheat: false, at,
+      };
+    }
     await saveMeal(date, slotId, meal);
     s.close();
     haptic(15);
