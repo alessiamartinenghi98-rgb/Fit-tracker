@@ -12,6 +12,7 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
   con pesi dell'ultima volta e ripetizioni obiettivo, suggerimento "Aumenta il peso", timer di recupero,
   salvataggio a ogni serie (l'allenamento in corso si ritrova riaprendo l'app), "Termina allenamento"
   con chiusura come parziale (conta nell'obiettivo, mezza lettera nella Home, "Parziale 14/20"),
+  tapis roulant dopo l'allenamento (minuti, velocità, pendenza, miglioramento sull'ultima volta),
   allenamento libero (corsa, nuoto, camminata, bici, altro), libreria esercizi, storico modificabile.
 - **Dieta**: piano settimanale modificabile, opzioni di colazione e spuntino (modificabili),
   categorie di pranzo e cena con contatori e avvisi,
@@ -37,6 +38,7 @@ js/timer.js       Timer di recupero
 js/diet.js        Dieta
 js/plan.js        Piano alimentare e calcoli della dieta
 js/water.js       Contatore acqua
+js/treadmill.js   Tapis roulant
 js/progress.js    Progressi e grafici
 icons/            Icone dell'app
 ```

@@ -11,7 +11,7 @@
 import * as db from './db.js';
 import {
   $, esc, icon, haptic, openSheet, todayISO, startOfWeek, addDays, parseISO,
-  formatFullDate, formatShortDate, formatMonth, parseNum,
+  formatFullDate, formatShortDate, formatMonth, parseNum, fmtNum,
 } from './ui.js';
 import { strengthTemplates } from './templates.js';
 import {
@@ -20,6 +20,7 @@ import {
   isPartial, partialText, templateStatusForWeek,
 } from './workouts.js';
 import { WATER_GOAL, WATER_STEP, setWater, liters } from './water.js';
+import { hasTreadmill } from './treadmill.js';
 import { dayStatus, SLOTS, mealLabel, isCheatMeal } from './plan.js';
 
 const WEEKLY_GOAL = 4;
@@ -60,6 +61,9 @@ async function load() {
 
 const waterOf = (date) => data.water.get(date) || 0;
 const workoutsOf = (date) => data.workouts.filter((w) => !isActive(w) && w.date === date);
+/** Tapis roulant fatti in un giorno. */
+const treadmillsOf = (date) => workoutsOf(date).filter(hasTreadmill).map((w) => w.treadmill);
+const treadmillMinutes = (date) => treadmillsOf(date).reduce((sum, t) => sum + (t.minutes || 0), 0);
 
 /** Giorni puliti e sgarri tra due date (incluse). */
 function dietStats(from, to) {
@@ -214,6 +218,7 @@ function dayProgress(date) {
     diet,
     gym: full ? 1 : partialW ? 0.5 : 0,
     ml, meals, cheat, full, partialW,
+    tmMinutes: treadmillMinutes(date),
   };
 }
 
@@ -259,6 +264,11 @@ function ringsCardInner(p, from = null) {
         <span class="rl-text"><span class="rl-label">Allenamento</span>
         <span class="rl-value">${esc(gymText)}</span></span>
       </div>
+      <div class="rl-row">
+        <span class="rl-mark tm"></span>
+        <span class="rl-text"><span class="rl-label">Tapis roulant</span>
+        <span class="rl-value num">${p.tmMinutes}<small> min</small></span></span>
+      </div>
     </div>`;
 }
 
@@ -287,7 +297,7 @@ function calendarInner() {
     cells += `
       <button class="cal-day ${date === today ? 'today' : ''} ${future ? 'future' : ''}" data-day="${date}" ${future ? 'disabled' : ''}
               aria-label="${esc(formatFullDate(date))}">
-        <span class="cal-num num">${day}</span>
+        <span class="cal-num num">${day}${!future && treadmillMinutes(date) ? '<i class="tm-dot cal-tm" aria-label="Tapis roulant"></i>' : ''}</span>
         <span class="cal-rings">${future ? '' : ringsSVG(dayProgress(date), { size: 30, stroke: 3.5, gap: 1 })}</span>
       </button>`;
   }
@@ -303,6 +313,7 @@ function calendarInner() {
       <span><i class="rl-mark water"></i>Acqua 2 L</span>
       <span><i class="rl-mark diet"></i>Pasti 4/4</span>
       <span><i class="rl-mark gym"></i>Allenamento</span>
+      <span><i class="tm-dot"></i>Tapis roulant</span>
     </div>`;
 }
 
@@ -451,5 +462,16 @@ function dayDetail(date) {
     <div class="day-section">
       <div class="day-section-head"><i class="dot gym ${g.gym ? 'on' : ''}"></i>Allenamento</div>
       ${workoutRows ? `<div class="list">${workoutRows}</div>` : '<p class="confirm-text">Nessun allenamento registrato.</p>'}
-    </div>`;
+    </div>
+
+    ${treadmillsOf(date).length ? `
+    <div class="day-section">
+      <div class="day-section-head"><i class="tm-dot big"></i>Tapis roulant</div>
+      ${treadmillsOf(date).map((t) => `
+        <div class="card tm-detail">
+          <div class="stat-mini"><div class="v num">${t.minutes}<small>min</small></div><div class="l">Minuti</div></div>
+          <div class="stat-mini"><div class="v num">${t.speed ? esc(fmtNum(t.speed)) : '–'}<small>km/h</small></div><div class="l">Velocità</div></div>
+          <div class="stat-mini"><div class="v num">${t.incline ? esc(fmtNum(t.incline)) : '–'}<small>%</small></div><div class="l">Pendenza</div></div>
+        </div>`).join('')}
+    </div>` : ''}`;
 }

@@ -19,6 +19,32 @@ import {
   repRange, targetText, notesHTML, UNIT_SHORT, renameExerciseInTemplates, openTemplatesManager,
 } from './templates.js';
 import { loadTimerSetting, isTimerEnabled, setTimerEnabled, startRest, stopRest } from './timer.js';
+import {
+  mountTreadmill, lastTreadmill, defaultTreadmill, treadmillToSave, treadmillText, hasTreadmill,
+} from './treadmill.js';
+
+/** Riga "Tapis roulant · 25 min · 6 km/h" nelle card dello storico. */
+function treadmillLine(w) {
+  return hasTreadmill(w)
+    ? `<div class="wc-tm"><i class="tm-dot"></i>Tapis roulant · ${esc(treadmillText(w.treadmill))}</div>`
+    : '';
+}
+
+/** Monta la card del tapis roulant in un foglio (allenamento libero o cardio). */
+function sheetTreadmill(body, existing) {
+  const last = lastTreadmill(state.workouts, existing?.id);
+  const value = existing?.treadmill ? { ...existing.treadmill } : defaultTreadmill(last);
+  const wrap = body.querySelector('[data-tm-wrap]');
+  if (wrap) mountTreadmill(wrap, { value, last });
+  return value;
+}
+
+/** Salva (o toglie) il tapis roulant nell'allenamento. */
+function applyTreadmill(w, value) {
+  const tm = treadmillToSave(value);
+  if (tm) w.treadmill = tm;
+  else delete w.treadmill;
+}
 
 /* Esercizi proposti al primo avvio (si possono rinominare o eliminare) */
 const DEFAULT_EXERCISES = [
@@ -390,6 +416,7 @@ function workoutCard(w) {
         <div class="stat-mini"><div class="v num">${fmtInt(st.volume)}<small>kg</small></div><div class="l">Volume</div></div>
       </div>
       ${entries.length ? `<div class="wc-ex">${shown}${more}</div>` : ''}
+      ${treadmillLine(w)}
     </article>`;
 }
 
@@ -402,6 +429,7 @@ function cardioCard(w) {
         </div>
         <div class="wc-date">${esc(formatDay(w.date))}</div>
       </div>
+      ${treadmillLine(w)}
     </article>`;
 }
 
@@ -416,6 +444,7 @@ function activityCard(w) {
         <div class="wc-date">${esc(formatDay(w.date))}</div>
       </div>
       ${w.note ? `<div class="wc-ex"><span>${esc(w.note)}</span></div>` : ''}
+      ${treadmillLine(w)}
     </article>`;
 }
 
@@ -569,6 +598,7 @@ export function openActivitySheet(existing = null) {
         <span class="field-label">Nota <span class="opt">· facoltativa</span></span>
         <textarea class="input" data-note rows="2" maxlength="200" placeholder="Es. 5 km al parco, ritmo tranquillo">${esc(draft.note)}</textarea>
       </label>
+      <div data-tm-wrap style="margin-bottom:var(--s-3)"></div>
       <p class="footnote" style="margin-top:0">Conta per il calendario della Home, non per l'obiettivo dei 4 allenamenti settimanali.</p>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-save>${icon('check')} ${existing ? 'Salva modifiche' : 'Registra allenamento'}</button>
@@ -578,6 +608,7 @@ export function openActivitySheet(existing = null) {
 
   const body = s.body;
   const durInput = $('[data-duration] input', body);
+  const tmValue = sheetTreadmill(body, existing);
 
   $('[data-types]', body).addEventListener('click', (e) => {
     const chip = e.target.closest('[data-type]');
@@ -609,6 +640,7 @@ export function openActivitySheet(existing = null) {
       updatedAt: now,
       finishedAt: w.finishedAt || now,
     });
+    applyTreadmill(w, tmValue);
     await db.put('workouts', w);
     if (!existing) state.workouts.unshift(w);
     state.workouts.sort(byNewest);
@@ -638,18 +670,21 @@ export function openCardioSheet(t) {
     title: t.name,
     html: `
       <div class="card notes-card">${notesHTML(t.notes)}</div>
+      <div data-tm-wrap style="margin-top:var(--s-3)"></div>
       <p class="footnote">Facoltativo: non conta nell'obiettivo dei 4 allenamenti settimanali.</p>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-done>${icon('check')} ${doneToday ? 'Segna di nuovo come fatto' : 'Segna come fatto'}</button>
         <button class="btn btn-secondary btn-block" data-close>Chiudi</button>
       </div>`,
   });
+  const tmValue = sheetTreadmill(s.body, null);
   $('[data-done]', s.body).addEventListener('click', async () => {
     const now = Date.now();
     const w = {
       id: db.uid(), date: today, name: t.name, kind: 'cardio', templateId: t.id,
       templateCode: t.code, status: 'done', exercises: [], createdAt: now, updatedAt: now, finishedAt: now,
     };
+    applyTreadmill(w, tmValue);
     await db.put('workouts', w);
     state.workouts.unshift(w);
     state.workouts.sort(byNewest);
@@ -670,14 +705,17 @@ function openCardioRecord(w) {
         <span class="field-label">Data</span>
         <input class="input" type="date" data-date value="${w.date}" max="${todayISO()}">
       </label>
+      <div data-tm-wrap></div>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button>
         <button class="btn btn-danger btn-block" data-delete>${icon('trash-2')} Elimina</button>
       </div>`,
   });
+  const tmValue = sheetTreadmill(s.body, w);
   $('[data-save]', s.body).addEventListener('click', async () => {
     const date = $('[data-date]', s.body).value;
     if (date) w.date = date;
+    applyTreadmill(w, tmValue);
     w.updatedAt = Date.now();
     await db.put('workouts', w);
     state.workouts.sort(byNewest);
@@ -735,6 +773,7 @@ function openEditor(workout, { pickFirst = false, resumed = false } = {}) {
     <button class="btn btn-secondary btn-block" data-action="add-exercise" style="margin-top:var(--s-3)">
       ${icon('plus')} Aggiungi esercizio
     </button>
+    <div id="ed-treadmill" style="margin-top:var(--s-4)"></div>
     ${active ? `
       <button class="btn btn-primary btn-block finish-btn" data-action="finish">
         ${icon('flag')} Termina allenamento
@@ -747,6 +786,11 @@ function openEditor(workout, { pickFirst = false, resumed = false } = {}) {
   renderDate();
   renderExercises();
   updateSummary();
+
+  // Tapis roulant dopo l'allenamento: valori dell'ultima volta, salvataggio automatico
+  const lastTm = lastTreadmill(state.workouts, workout.id);
+  if (!workout.treadmill) workout.treadmill = defaultTreadmill(lastTm);
+  mountTreadmill($('#ed-treadmill'), { value: workout.treadmill, last: lastTm, onChange: () => saveNow() });
 
   // Apertura animata e barra delle schede nascosta
   ed.classList.add('open');
@@ -892,6 +936,8 @@ async function saveNow() {
 /** Chiude l'editor. Un allenamento in corso resta in corso. */
 async function closeEditor() {
   if (document.activeElement) document.activeElement.blur();
+  // Allenamento già registrato: il tapis roulant non fatto non viene salvato
+  if (state.current && !isActive(state.current)) applyTreadmill(state.current, state.current.treadmill);
   await saveNow();
 
   // Un allenamento senza esercizi non viene conservato
@@ -969,6 +1015,7 @@ async function finishWorkout() {
   w.exercises = w.exercises
     .map((e) => ({ ...e, sets: e.sets.filter((s) => s.done && (s.reps || 0) > 0) }))
     .filter((e) => e.sets.length > 0);
+  applyTreadmill(w, w.treadmill);
   w.status = 'done';
   w.finishedAt = Date.now();
   await saveNow();

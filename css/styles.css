@@ -39,6 +39,8 @@
   --water-soft: rgba(74, 168, 255, 0.16);
   --diet: #ff9f0a;
   --diet-soft: rgba(255, 159, 10, 0.16);
+  --treadmill: #bf5af2;
+  --treadmill-soft: rgba(191, 90, 242, 0.16);
 
   /* Azioni distruttive */
   --danger: #ff453a;
@@ -2740,6 +2742,234 @@ input[type="date"]::-webkit-date-and-time-value {
   color: var(--text-2);
 }
 
+/* Tapis roulant ---------------------------------------------------------- */
+.tm-card {
+  border-color: rgba(191, 90, 242, 0.45);
+}
+
+.tm-card.on {
+  border-color: var(--treadmill);
+}
+
+.tm-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.tm-head .row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tm-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--treadmill-soft);
+  color: var(--treadmill);
+}
+
+.tm-title {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.tm-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.tm-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.switch.tm:checked {
+  background: var(--treadmill);
+}
+
+.tm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+
+.tm-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--s-3) 6px var(--s-2);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.tm-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.tm-label .opt {
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.tm-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.tm-input {
+  width: 100%;
+  min-width: 0;
+  max-width: 64px;
+  border: none;
+  outline: none;
+  background: transparent;
+  text-align: right;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  padding: 0;
+}
+
+.tm-input:focus {
+  color: var(--treadmill);
+}
+
+.tm-value small {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.tm-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  width: 100%;
+}
+
+.tm-btns button {
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  transition: transform 120ms var(--ease-out);
+}
+
+.tm-btns button:active {
+  transform: scale(0.92);
+}
+
+.tm-btns svg.lucide {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.5;
+}
+
+.tm-delta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--s-3);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.tm-delta svg.lucide {
+  width: 15px;
+  height: 15px;
+}
+
+.tm-delta.up {
+  color: var(--treadmill);
+}
+
+/* Pallino viola (calendario, legende, storico) */
+.tm-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--treadmill);
+  flex-shrink: 0;
+}
+
+.tm-dot.big {
+  width: 10px;
+  height: 10px;
+}
+
+.cal-num {
+  position: relative;
+}
+
+.cal-tm {
+  position: absolute;
+  top: -1px;
+  right: -9px;
+}
+
+.rl-mark.tm {
+  color: var(--treadmill);
+  background: var(--treadmill);
+  border-width: 0;
+  width: 10px;
+  height: 10px;
+  margin: 0 1px;
+}
+
+.wc-tm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--s-3);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.tm-detail {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+}
+
+.tm-detail + .tm-detail {
+  margin-top: var(--s-2);
+}
+
+.kpi-unit {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 4px;
+  letter-spacing: 0;
+}
+
 /* Calendario: numero del giorno con i tre anelli sotto */
 .cal-day {
   height: 66px;
@@ -3362,4 +3592,10 @@ input[type="date"]::-webkit-date-and-time-value {
     animation-delay: 0ms !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* Nelle griglie le card stanno affiancate: niente margine sopra */
+.kpi-grid > .card,
+.tpl-grid > .card {
+  margin-top: 0;
 }
