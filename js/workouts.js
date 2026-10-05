@@ -517,17 +517,27 @@ async function guardActive() {
 }
 
 /** Inizia una scheda: esercizi, serie e pesi dell'ultima volta già compilati. */
-export async function startTemplate(templateId) {
+/** Data valida per un nuovo allenamento: mai nel futuro. */
+function safeDate(date) {
+  const today = todayISO();
+  return date && date <= today ? date : today;
+}
+
+/**
+ * Inizia una scheda. Con { date } la scheda viene registrata in un giorno
+ * passato (allenamento dimenticato); le date future non sono ammesse.
+ */
+export async function startTemplate(templateId, { date } = {}) {
   const t = getTemplate(templateId);
   if (!t) return;
-  if (t.kind === 'cardio') return openCardioSheet(t);
+  if (t.kind === 'cardio') return openCardioSheet(t, { date });
   if (await guardActive()) return;
 
   haptic();
   const now = Date.now();
   const w = {
     id: db.uid(),
-    date: todayISO(),
+    date: safeDate(date),
     name: t.name,
     templateId: t.id,
     templateCode: t.code,
@@ -569,10 +579,10 @@ function entryFromTemplate(te, workout) {
  * Allenamento libero: tipo (corsa, nuoto, camminata, bici, altro), durata e nota.
  * Con un allenamento già registrato il foglio serve a modificarlo o eliminarlo.
  */
-export function openActivitySheet(existing = null) {
+export function openActivitySheet(existing = null, { date } = {}) {
   const draft = existing
     ? { activity: existing.activity, duration: existing.duration || 30, note: existing.note || '', date: existing.date }
-    : { activity: 'corsa', duration: 30, note: '', date: todayISO() };
+    : { activity: 'corsa', duration: 30, note: '', date: safeDate(date) };
 
   const s = openSheet({
     title: existing ? 'Allenamento libero' : 'Nuovo allenamento libero',
@@ -640,7 +650,7 @@ export function openActivitySheet(existing = null) {
       name: activityType(draft.activity).label,
       duration: Math.min(600, duration),
       note: $('[data-note]', body).value.trim(),
-      date: $('[data-date]', body).value || todayISO(),
+      date: safeDate($('[data-date]', body).value),
       updatedAt: now,
       finishedAt: w.finishedAt || now,
     });
@@ -668,8 +678,8 @@ export function openActivitySheet(existing = null) {
 
 /* --- Cardio: basta segnarlo come fatto ---------------------------------- */
 
-export function openCardioSheet(t) {
-  const today = todayISO();
+export function openCardioSheet(t, { date } = {}) {
+  const today = safeDate(date);
   const doneToday = state.workouts.some((w) => isCardio(w) && w.date === today);
   const s = openSheet({
     title: t.name,
@@ -697,12 +707,25 @@ export function openCardioSheet(t) {
     renderList();
     notifyChange();
     haptic(15);
-    toast('Cardio registrato');
+    toast(today === todayISO() ? 'Cardio registrato' : `Cardio registrato per ${formatDay(today).toLowerCase()}`);
     afterWorkout(w);
   });
 }
 
 /** Cardio già registrato: si può cambiare la data o eliminarlo. */
+/**
+ * Apre un allenamento già salvato per modificarlo o eliminarlo.
+ * Restituisce 'editor' se si apre l'editor a schermo intero, 'sheet' se un foglio.
+ */
+export function openWorkoutRecord(id) {
+  const w = state.workouts.find((x) => x.id === id);
+  if (!w) return null;
+  if (isCardio(w)) { openCardioRecord(w); return 'sheet'; }
+  if (isActivity(w)) { openActivitySheet(w); return 'sheet'; }
+  openEditor(structuredClone(w));
+  return 'editor';
+}
+
 function openCardioRecord(w) {
   const s = openSheet({
     title: w.name || 'Cardio',
@@ -720,7 +743,7 @@ function openCardioRecord(w) {
   const tmValue = sheetTreadmill(s.body, w);
   $('[data-save]', s.body).addEventListener('click', async () => {
     const date = $('[data-date]', s.body).value;
-    if (date) w.date = date;
+    if (date) w.date = safeDate(date);
     applyTreadmill(w, tmValue);
     w.updatedAt = Date.now();
     await db.put('workouts', w);
@@ -769,7 +792,7 @@ function openEditor(workout, { pickFirst = false, resumed = false } = {}) {
     <div class="editor-meta">
       <label class="date-pill">
         ${icon('calendar-days')}<span id="ed-date-label"></span>
-        <input type="date" id="ed-date" value="${workout.date}" aria-label="Data allenamento">
+        <input type="date" id="ed-date" value="${workout.date}" max="${todayISO()}" aria-label="Data allenamento">
       </label>
       <span class="editor-summary num" id="ed-summary"></span>
     </div>
@@ -1120,6 +1143,8 @@ function bindEditorOnce(ed) {
 
   ed.addEventListener('change', (e) => {
     if (e.target.id === 'ed-date' && e.target.value) {
+      // Nessuna data futura
+      if (e.target.value > todayISO()) { e.target.value = state.current.date; toast('Non puoi scegliere un giorno futuro', { error: true }); return; }
       state.current.date = e.target.value;
       renderDate();
       renderExercises(); // i riferimenti "ultima volta" dipendono dalla data

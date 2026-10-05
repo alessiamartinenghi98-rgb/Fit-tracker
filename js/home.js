@@ -13,9 +13,10 @@ import {
   $, esc, icon, haptic, openSheet, todayISO, startOfWeek, addDays, parseISO,
   formatFullDate, formatShortDate, formatMonth, parseNum, fmtNum,
 } from './ui.js';
-import { strengthTemplates } from './templates.js';
+import { strengthTemplates, cardioTemplate } from './templates.js';
 import {
   openStartSheet, resumeActive, startTemplate, activeBanner, suggestedTemplate,
+  openWorkoutRecord, openActivitySheet, openCardioSheet, getActiveWorkout,
   isActive, isStrength, isExtra, isCardio, isActivity, workoutLabel, activityType, workoutStats,
   isPartial, partialText, templateStatusForWeek,
 } from './workouts.js';
@@ -109,15 +110,9 @@ export async function renderHome() {
   $('#home-content').innerHTML = `
     <div class="card rings-card" id="rings-card">${ringsCardInner(dayProgress(today))}</div>
 
-    ${recap ? recapCard(recap) : ''}
+    <div id="recap-wrap">${recap ? recapCard(recap) : ''}</div>
 
-    <div class="card quote-card ${message.kind === 'restart' ? 'soft' : ''}">
-      <span class="quote-icon">${icon(message.kind === 'restart' ? 'heart' : 'sparkles')}</span>
-      <div class="quote-body">
-        <div class="quote-label">Frase del giorno</div>
-        <div class="quote-text">${esc(message.text)}</div>
-      </div>
-    </div>
+    ${quoteCard(message)}
 
     ${active ? activeBanner(active) : ''}
 
@@ -142,6 +137,18 @@ export async function renderHome() {
     <div class="card week-card">${weekCardInner(weekFrom, weekTo, active)}</div>
 
     <div class="card cal-card" id="cal-card">${calendarInner()}</div>`;
+}
+
+/** Card della frase del giorno. */
+function quoteCard(message) {
+  return `
+    <div class="card quote-card ${message.kind === 'restart' ? 'soft' : ''}" id="quote-card">
+      <span class="quote-icon">${icon(message.kind === 'restart' ? 'heart' : 'sparkles')}</span>
+      <div class="quote-body">
+        <div class="quote-label">Frase del giorno</div>
+        <div class="quote-text">${esc(message.text)}</div>
+      </div>
+    </div>`;
 }
 
 /** Riepilogo positivo della settimana appena finita (lunedì). */
@@ -355,8 +362,26 @@ async function changeWater(date, delta) {
   const ml = await setWater(date, waterOf(date) + delta, { notify: false });
   data.water.set(date, ml);
   haptic(delta > 0 ? 10 : 5);
+  afterWaterChange(date, before);
+}
+
+/**
+ * Dopo una modifica all'acqua (di oggi o di un giorno passato): anelli,
+ * calendario, frase del giorno e riepilogo si ricalcolano subito.
+ */
+function afterWaterChange(date, before) {
   refreshWater(date, before);
+  refreshMotivation();
   afterWater(date);
+}
+
+/** Ricalcola frase del giorno e riepilogo del lunedì (giorni di fila inclusi). */
+async function refreshMotivation() {
+  const [message, recap] = await Promise.all([dailyMessage(), mondayRecap()]);
+  const q = $('#quote-card');
+  if (q) q.outerHTML = quoteCard(message);
+  const r = $('#recap-wrap');
+  if (r) r.innerHTML = recap ? recapCard(recap) : '';
 }
 
 /**
@@ -375,7 +400,7 @@ function refreshWater(date, before = null) {
 }
 
 /** Foglio per correggere a mano i millilitri di un giorno. */
-function editWater(date) {
+function editWater(date, onDone = null) {
   const s = openSheet({
     title: 'Correggi acqua',
     html: `
@@ -403,16 +428,29 @@ function editWater(date) {
     const ml = await setWater(date, parseNum(input.value) || 0, { notify: false });
     data.water.set(date, ml);
     s.close();
-    refreshWater(date, before);
-    afterWater(date);
+    afterWaterChange(date, before);
+    if (onDone) onDone();
   });
 }
 
 /* --- Dettaglio di una giornata ------------------------------------------- */
 
 function openDaySheet(date) {
+  if (date > todayISO()) return; // nessun dato nei giorni futuri
   const title = formatFullDate(date);
-  const s = openSheet({ title: title.charAt(0).toUpperCase() + title.slice(1), html: dayDetail(date) });
+
+  // Quando qualcosa cambia (allenamento aggiunto, modificato, eliminato…)
+  // il dettaglio si aggiorna da solo, insieme al resto della Home
+  const onChange = async () => {
+    await load();
+    s.body.innerHTML = dayDetail(date);
+  };
+  const s = openSheet({
+    title: title.charAt(0).toUpperCase() + title.slice(1),
+    html: dayDetail(date),
+    onClose: () => document.removeEventListener('data-changed', onChange),
+  });
+  document.addEventListener('data-changed', onChange);
 
   s.body.addEventListener('click', async (e) => {
     const w = e.target.closest('[data-dwater]');
@@ -422,14 +460,66 @@ function openDaySheet(date) {
       data.water.set(date, ml);
       haptic(5);
       s.body.innerHTML = dayDetail(date);
-      refreshWater(date, before);
-      afterWater(date);
+      afterWaterChange(date, before);
       return;
     }
+    if (e.target.closest('[data-dwater-edit]')) return editWater(date, () => { s.body.innerHTML = dayDetail(date); });
     if (e.target.closest('[data-open-diet]')) {
       s.close();
       document.dispatchEvent(new CustomEvent('open-diet', { detail: date }));
+      return;
     }
+    // Allenamento già salvato: modifica o elimina
+    const rec = e.target.closest('[data-workout-id]');
+    if (rec) {
+      if (openWorkoutRecord(rec.dataset.workoutId) === 'editor') s.close();
+      return;
+    }
+    // Allenamento dimenticato: si aggiunge con la data di questo giorno
+    if (e.target.closest('[data-add-workout]')) addWorkoutOn(date, s);
+  });
+}
+
+/** Scelta del tipo di allenamento da aggiungere in un giorno passato. */
+function addWorkoutOn(date, daySheet) {
+  const cardio = cardioTemplate();
+  const s = openSheet({
+    title: 'Aggiungi allenamento',
+    html: `
+      <p class="confirm-text" style="margin-bottom:var(--s-3)">Verrà registrato per ${esc(formatFullDate(date))}.</p>
+      <div class="list">
+        ${strengthTemplates().map((t) => `
+          <button class="list-row" data-pick-tpl="${t.id}">
+            <span class="tpl-badge"><span>${esc(t.code)}</span></span>
+            <span class="row-main"><span class="row-title">${esc(t.name)}</span><span class="row-sub">${t.exercises.length} esercizi</span></span>
+            <span class="row-trail">${icon('chevron-right')}</span>
+          </button>`).join('')}
+      </div>
+      <div class="list" style="margin-top:var(--s-3)">
+        ${cardio ? `
+        <button class="list-row" data-pick-cardio>
+          <span class="tpl-badge cardio">${icon('heart-pulse')}</span>
+          <span class="row-main"><span class="row-title">${esc(cardio.name)}</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>` : ''}
+        <button class="list-row" data-pick-free>
+          <span class="tpl-badge cardio">${icon('activity')}</span>
+          <span class="row-main"><span class="row-title">Allenamento libero</span><span class="row-sub">Corsa, nuoto, camminata, bici o altro</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>
+      </div>`,
+  });
+  s.body.addEventListener('click', (e) => {
+    const tpl = e.target.closest('[data-pick-tpl]');
+    if (tpl) {
+      // La scheda si apre nell'editor a schermo intero: chiudiamo i fogli
+      s.close();
+      daySheet.close();
+      startTemplate(tpl.dataset.pickTpl, { date });
+      return;
+    }
+    if (e.target.closest('[data-pick-cardio]')) { s.close(); openCardioSheet(cardio, { date }); return; }
+    if (e.target.closest('[data-pick-free]')) { s.close(); openActivitySheet(null, { date }); }
   });
 }
 
@@ -466,23 +556,27 @@ function dayDetail(date) {
       : isCardio(w) ? 'Cardio del sabato'
         : isPartial(w) ? `Parziale · ${partialText(w)} serie` : `${workoutStats(w).sets} serie`;
     return `
-      <div class="list-row">
+      <button class="list-row" data-workout-id="${w.id}">
         <span class="row-icon accent">${icon(isActivity(w) ? activityType(w.activity).icon : isCardio(w) ? 'heart-pulse' : 'dumbbell')}</span>
         <span class="row-main">
           <span class="row-title">${esc(workoutLabel(w))}</span>
           ${sub ? `<span class="row-sub">${esc(sub)}</span>` : ''}
         </span>
-      </div>`;
+        <span class="row-trail">${icon('pencil')}</span>
+      </button>`;
   }).join('');
 
   return `
     <div class="day-section">
       <div class="day-section-head"><i class="dot water ${g.water ? 'on' : ''}"></i>Acqua</div>
       <div class="card day-water">
-        <div class="sum-big num">${liters(ml)}<span> / ${liters(WATER_GOAL)} L</span></div>
+        <button class="water-amount" data-dwater-edit aria-label="Inserisci il totale a mano">
+          <span class="sum-big num" style="margin-top:0">${liters(ml)}<span> / ${liters(WATER_GOAL)} L</span></span>
+          <span class="sum-sub" style="margin-top:2px">Tocca per inserire il totale</span>
+        </button>
         <div class="water-btns">
-          <button class="icon-btn" data-dwater="-${WATER_STEP}" aria-label="Togli ${WATER_STEP} ml" ${ml <= 0 ? 'disabled' : ''}>${icon('minus')}</button>
-          <button class="btn btn-water" data-dwater="${WATER_STEP}">${icon('plus')} ${WATER_STEP} ml</button>
+          <button class="btn btn-secondary btn-water-minus" data-dwater="-${WATER_STEP}" ${ml <= 0 ? 'disabled' : ''}>${icon('minus')} ${WATER_STEP}</button>
+          <button class="btn btn-water" data-dwater="${WATER_STEP}">${icon('plus')} ${WATER_STEP}</button>
         </div>
       </div>
     </div>
@@ -496,6 +590,7 @@ function dayDetail(date) {
     <div class="day-section">
       <div class="day-section-head"><i class="dot gym ${g.gym ? 'on' : ''}"></i>Allenamento</div>
       ${workoutRows ? `<div class="list">${workoutRows}</div>` : '<p class="confirm-text">Nessun allenamento registrato.</p>'}
+      <button class="btn btn-secondary btn-block" data-add-workout style="margin-top:var(--s-2)">${icon('plus')} Aggiungi allenamento</button>
     </div>
 
     ${treadmillsOf(date).length ? `
