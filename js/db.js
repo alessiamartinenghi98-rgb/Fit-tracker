@@ -6,13 +6,19 @@
    - workouts  : allenamenti              { id, date, name, exercises: [...], createdAt, updatedAt }
                  exercises[i] = { exerciseId, name, sets: [{ weight, reps, done }] }
    - meals     : pasti                    { id, date, type, description, kcal, protein, carbs, fat, createdAt }
+   - templates : schede di allenamento    { id, code, name, kind, order, notes, exercises: [...] }
+                 exercises[i] = { exerciseId, name, sets, repMin, repMax, unit }  (unit: '' | 'g' | 'b')
    - meta      : impostazioni varie       { key, value }
+   Gli allenamenti possono avere anche: status ('active' = in corso), kind ('cardio'),
+   templateId/templateCode e, per ogni esercizio, target { sets, repMin, repMax, unit }.
    Le date sono stringhe locali "AAAA-MM-GG": si ordinano e confrontano come testo.
    ========================================================================== */
 
 const DB_NAME = 'fit-tracker';
-const DB_VERSION = 1;
-const STORES = ['exercises', 'workouts', 'meals', 'meta'];
+// Versione 2: aggiunto l'archivio "templates". L'aggiornamento crea solo gli archivi
+// mancanti, quindi i dati già salvati restano intatti.
+const DB_VERSION = 2;
+const STORES = ['exercises', 'workouts', 'meals', 'templates', 'meta'];
 
 let dbPromise = null;
 
@@ -39,8 +45,16 @@ export function openDB() {
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });
       }
+      if (!db.objectStoreNames.contains('templates')) {
+        db.createObjectStore('templates', { keyPath: 'id' });
+      }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Se un'altra scheda aperta aggiorna il database, chiudiamo questa connessione
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
   return dbPromise;
@@ -146,20 +160,21 @@ export async function isPersisted() {
 /* --- Backup: esportazione e importazione JSON --------------------------- */
 
 const BACKUP_APP = 'fit-tracker';
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2; // la versione 2 include anche le schede
 
 /** Crea l'oggetto di backup con tutti i dati. */
 export async function exportData() {
-  const [exercises, workouts, meals] = await Promise.all([
+  const [exercises, workouts, meals, templates] = await Promise.all([
     getAll('exercises'),
     getAll('workouts'),
     getAll('meals'),
+    getAll('templates'),
   ]);
   return {
     app: BACKUP_APP,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    data: { exercises, workouts, meals },
+    data: { exercises, workouts, meals, templates },
   };
 }
 
@@ -171,18 +186,20 @@ export async function importData(backup) {
   if (!backup || backup.app !== BACKUP_APP || typeof backup.data !== 'object') {
     throw new Error('Il file non è un backup di Fit Tracker.');
   }
-  const { exercises = [], workouts = [], meals = [] } = backup.data;
-  if (![exercises, workouts, meals].every(Array.isArray)) {
+  const { exercises = [], workouts = [], meals = [], templates } = backup.data;
+  if (![exercises, workouts, meals].every(Array.isArray) || (templates && !Array.isArray(templates))) {
     throw new Error('Il backup è danneggiato.');
   }
   const valid = (arr) => arr.every((x) => x && typeof x.id === 'string');
-  if (!valid(exercises) || !valid(workouts) || !valid(meals)) {
+  if (!valid(exercises) || !valid(workouts) || !valid(meals) || (templates && !valid(templates))) {
     throw new Error('Il backup contiene elementi non validi.');
   }
 
-  // Un'unica transazione: o si importa tutto, o non cambia nulla
-  await tx(['exercises', 'workouts', 'meals'], 'readwrite', (t) => {
-    const lists = { exercises, workouts, meals };
+  // Un'unica transazione: o si importa tutto, o non cambia nulla.
+  // I backup della versione 1 non hanno le schede: in quel caso restano quelle attuali.
+  const lists = { exercises, workouts, meals };
+  if (templates && templates.length) lists.templates = templates;
+  await tx(Object.keys(lists), 'readwrite', (t) => {
     for (const name of Object.keys(lists)) {
       const s = t.objectStore(name);
       s.clear();

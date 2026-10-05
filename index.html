@@ -32,8 +32,17 @@
 <body>
   <div id="app">
 
+    <!-- ========================= SCHEDA HOME ========================= -->
+    <section class="view active" id="view-home" data-title="Home">
+      <header class="topbar">
+        <span class="topbar-title">Home</span>
+      </header>
+      <h1 class="large-title">Home<small id="home-date"></small></h1>
+      <div id="home-content"></div>
+    </section>
+
     <!-- ===================== SCHEDA ALLENAMENTI ===================== -->
-    <section class="view active" id="view-workouts" data-title="Allenamenti">
+    <section class="view" id="view-workouts" data-title="Allenamenti">
       <header class="topbar">
         <span class="topbar-title">Allenamenti</span>
         <div class="topbar-actions">
@@ -75,7 +84,10 @@
 
   <!-- Barra delle schede -->
   <nav class="tabbar" id="tabbar" aria-label="Navigazione principale">
-    <button class="tab active" data-view="workouts">
+    <button class="tab active" data-view="home">
+      <i data-lucide="house"></i><span>Home</span>
+    </button>
+    <button class="tab" data-view="workouts">
       <i data-lucide="dumbbell"></i><span>Allenamenti</span>
     </button>
     <button class="tab" data-view="diet">

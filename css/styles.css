@@ -272,7 +272,7 @@ svg.lucide {
   bottom: 0;
   z-index: 40;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   height: calc(var(--tabbar-h) + var(--safe-bottom));
   padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
   background: rgba(10, 10, 12, 0.78);
@@ -1688,6 +1688,643 @@ input[type="date"]::-webkit-date-and-time-value {
 .fade-list > *:nth-child(4) { animation-delay: 90ms; }
 .fade-list > *:nth-child(5) { animation-delay: 120ms; }
 .fade-list > *:nth-child(n + 6) { animation-delay: 150ms; }
+
+/* 10. HOME, SCHEDE, TIMER ------------------------------------------------- */
+
+/* Pulsante testuale nelle intestazioni di sezione */
+.link-btn {
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.link-btn svg.lucide {
+  width: 16px;
+  height: 16px;
+}
+
+/* Lettera della scheda (A, B, C, D) */
+.tpl-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+  transition: background 200ms ease, color 200ms ease;
+}
+
+.tpl-badge svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+
+.tpl-badge.done {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tpl-badge.cardio {
+  color: var(--text-2);
+}
+
+.tpl-badge.cardio.done {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tpl-badge.small {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.mini-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  margin-right: 8px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 700;
+  vertical-align: 2px;
+}
+
+/* Griglia 2×2 delle schede */
+.tpl-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.tpl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  min-height: 132px;
+}
+
+.tpl-grid .card + .card {
+  margin-top: 0;
+}
+
+.tpl-top {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-2);
+}
+
+.tpl-check {
+  color: var(--accent);
+  display: flex;
+}
+
+.tpl-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.tpl-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: auto;
+}
+
+.tpl-cardio {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  text-align: left;
+  margin-top: var(--s-3);
+}
+
+.tpl-cardio .row-title,
+.active-banner .row-title {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.tpl-cardio .row-sub,
+.active-banner .row-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.tpl-cardio .row-main,
+.active-banner .row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tpl-cardio .row-trail {
+  color: var(--text-3);
+  display: flex;
+}
+
+.free-btn {
+  margin-top: var(--s-2);
+}
+
+/* "Consigliata" nel foglio di scelta */
+.pill-accent {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Riquadro "Allenamento in corso" */
+.active-banner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  text-align: left;
+  border-color: rgba(198, 244, 50, 0.35);
+  margin-bottom: var(--s-3);
+}
+
+.ab-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+.ab-cta {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ab-cta svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+
+.pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 0 rgba(198, 244, 50, 0.6);
+  animation: pulse 1.8s ease-out infinite;
+}
+
+/* Note del cardio */
+.notes-card {
+  padding: var(--s-4);
+}
+
+.notes-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: var(--s-4) 0 var(--s-2);
+}
+
+.notes-title:first-child {
+  margin-top: 0;
+}
+
+.notes-list {
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.notes-list li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 15px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.notes-list li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* Editor: lettera della scheda accanto al titolo */
+.ed-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+
+.ed-title-row .title-input {
+  margin-top: 0;
+  min-width: 0;
+}
+
+.icon-btn.on {
+  color: var(--accent);
+}
+
+.finish-btn {
+  margin-top: var(--s-3);
+  height: 54px;
+}
+
+/* Obiettivo dell'esercizio e suggerimento di progressione */
+.ex-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.ex-target svg.lucide {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+}
+
+.ex-target b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hint-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--s-2);
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hint-pill svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+
+/* Spazio in fondo all'editor per la barra del timer */
+.editor {
+  padding-bottom: calc(var(--safe-bottom) + 112px);
+}
+
+/* Barra del timer di recupero */
+.rest-bar {
+  position: fixed;
+  left: calc(12px + var(--safe-left));
+  right: calc(12px + var(--safe-right));
+  bottom: calc(12px + var(--safe-bottom));
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 10px var(--s-4);
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(36, 36, 40, 0.94);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 0.5px solid var(--separator-strong);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  transform: translateY(calc(100% + 40px));
+  transition: transform 380ms var(--ease-out), border-color 300ms ease;
+}
+
+.rest-bar.show {
+  transform: translateY(0);
+}
+
+.rest-bar.ended {
+  border-color: rgba(198, 244, 50, 0.6);
+}
+
+.rest-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 250ms linear;
+}
+
+.rest-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rest-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.rest-label svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.rest-bar.ended .rest-label {
+  color: var(--accent);
+}
+
+.rest-time {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.rest-btn {
+  height: 40px;
+  min-width: 48px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 120ms var(--ease-out);
+}
+
+.rest-btn:active {
+  transform: scale(0.92);
+}
+
+.rest-skip {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Home: obiettivo settimanale */
+.goal-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.goal-text {
+  min-width: 0;
+}
+
+.goal-text .kpi-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.goal-big {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 4px 0 2px;
+}
+
+.goal-big span {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+.goal-range {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.ring {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  flex-shrink: 0;
+}
+
+.ring svg {
+  transform: rotate(-90deg);
+  display: block;
+}
+
+.ring circle {
+  fill: none;
+  stroke-width: 10;
+}
+
+.ring-track {
+  stroke: var(--surface-2);
+}
+
+.ring-value {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  animation: ring-in 900ms var(--ease-out);
+}
+
+.ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.ring-label b {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+/* Le quattro schede della settimana */
+.week-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 0.5px solid var(--separator);
+}
+
+.week-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wt-badge {
+  width: 100%;
+  max-width: 64px;
+  aspect-ratio: 1;
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 22px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  transition: transform 160ms var(--ease-out), background 200ms ease;
+}
+
+.week-tile:active .wt-badge {
+  transform: scale(0.94);
+}
+
+.wt-badge svg.lucide {
+  width: 24px;
+  height: 24px;
+  stroke-width: 3;
+}
+
+.week-tile.done .wt-badge {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.week-tile.running .wt-badge {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wt-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.week-tile.done .wt-name {
+  color: var(--text);
+}
+
+/* Card del cardio */
+.cardio-kpi {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.cardio-state {
+  margin-top: var(--s-2);
+  height: 46px;
+  display: flex;
+  align-items: center;
+  color: var(--text-3);
+}
+
+.cardio-state svg.lucide {
+  width: 38px;
+  height: 38px;
+  stroke-width: 1.75;
+}
+
+.cardio-kpi.done .cardio-state {
+  color: var(--accent);
+}
+
+.cardio-note {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.home-cta {
+  margin-top: var(--s-4);
+}
+
+.btn-hero {
+  height: 58px;
+  font-size: 18px;
+  border-radius: var(--r-lg);
+}
+
+.hero-note {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: var(--s-3);
+}
+
+.hero-note b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+@keyframes ring-in {
+  from { stroke-dashoffset: var(--c); }
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(198, 244, 50, 0.55); }
+  70% { box-shadow: 0 0 0 10px rgba(198, 244, 50, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(198, 244, 50, 0); }
+}
 
 /* Rispetta l'impostazione "Riduci movimento" del telefono */
 @media (prefers-reduced-motion: reduce) {

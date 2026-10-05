@@ -10,7 +10,7 @@
    l'aggiornamento su tutti i dispositivi.
    ========================================================================== */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `fit-tracker-${CACHE_VERSION}`;
 
 // Percorsi relativi: funzionano anche nella sottocartella di GitHub Pages
@@ -25,6 +25,9 @@ const APP_FILES = [
   './js/workouts.js',
   './js/diet.js',
   './js/progress.js',
+  './js/home.js',
+  './js/templates.js',
+  './js/timer.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
@@ -39,7 +42,8 @@ const CDN_FILES = [
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(APP_FILES);
+    // cache: 'reload' scavalca la cache HTTP del browser: si scaricano sempre i file nuovi
+    await cache.addAll(APP_FILES.map((url) => new Request(url, { cache: 'reload' })));
     // Le librerie CDN non bloccano l'installazione se la rete fallisce
     await Promise.all(CDN_FILES.map(async (url) => {
       try {
@@ -90,7 +94,7 @@ self.addEventListener('fetch', (event) => {
     const key = req.mode === 'navigate' ? './index.html' : req;
     const cached = await cache.match(key, { ignoreSearch: true });
 
-    const network = fetch(req).then((res) => {
+    const network = fetch(req, { cache: 'no-cache' }).then((res) => {
       if (res.ok) cache.put(key, res.clone());
       return res;
     }).catch(() => null);

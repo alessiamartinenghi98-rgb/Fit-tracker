@@ -1,19 +1,24 @@
 /* ==========================================================================
    workouts.js — Sezione Allenamenti
    --------------------------------------------------------------------------
-   - Storico degli allenamenti (raggruppato per mese)
-   - Editor a schermo intero: esercizi, serie (peso × ripetizioni), stepper +/-
-   - Libreria esercizi con ricerca, creazione, rinomina ed eliminazione
-   - "Ultima volta": valori della sessione precedente come riferimento
-   Ogni modifica nell'editor viene salvata automaticamente.
+   - Schede (A, B, C, D, cardio): si sceglie quale fare e si apre già compilata
+   - Allenamento "in corso": salvato a ogni modifica, ritrovato alla riapertura
+   - Editor a schermo intero: serie (peso × ripetizioni), stepper +/-,
+     suggerimento "Aumenta il peso", timer di recupero, "Termina allenamento"
+   - Storico raggruppato per mese e libreria esercizi
    ========================================================================== */
 
 import * as db from './db.js';
 import {
-  $, $$, esc, icon, toast, haptic, openSheet, confirmSheet, emptyState,
-  todayISO, formatDay, formatFullDate, formatShortDate, formatMonth,
+  $, esc, icon, toast, haptic, openSheet, confirmSheet, emptyState,
+  todayISO, startOfWeek, addDays, formatDay, formatShortDate, formatMonth,
   fmtNum, fmtInt, parseNum,
 } from './ui.js';
+import {
+  seedTemplates, loadTemplates, strengthTemplates, cardioTemplate, getTemplate,
+  repRange, targetText, notesHTML, UNIT_SHORT, renameExerciseInTemplates, openTemplatesManager,
+} from './templates.js';
+import { loadTimerSetting, isTimerEnabled, setTimerEnabled, startRest, stopRest } from './timer.js';
 
 /* Esercizi proposti al primo avvio (si possono rinominare o eliminare) */
 const DEFAULT_EXERCISES = [
@@ -25,6 +30,11 @@ const DEFAULT_EXERCISES = [
 const WEIGHT_STEP = 2.5; // kg per ogni tocco su +/-
 const REPS_STEP = 1;
 
+/* Recupero: 2-3 minuti per il primo esercizio, 60-90 secondi per gli altri.
+   Si parte dal valore centrale; ±15 s dalla barra del timer. */
+const REST_FIRST = 150;
+const REST_OTHERS = 75;
+
 const state = {
   workouts: [],   // tutti gli allenamenti, dal più recente
   exercises: [],  // libreria, in ordine alfabetico
@@ -32,7 +42,7 @@ const state = {
 };
 
 /* ==========================================================================
-   Calcoli condivisi (usati anche dalla sezione Progressi)
+   Calcoli condivisi (usati anche da Home e Progressi)
    ========================================================================== */
 
 /** Serie valide: completate (spunta) e con almeno una ripetizione. */
@@ -50,6 +60,7 @@ export function workoutStats(w) {
   return {
     exercises: entries.length,
     sets: entries.reduce((n, e) => n + completedSets(e).length, 0),
+    totalSets: entries.reduce((n, e) => n + (e.sets || []).length, 0),
     volume: entries.reduce((v, e) => v + entryVolume(e), 0),
   };
 }
@@ -58,6 +69,34 @@ export function workoutStats(w) {
 export function byNewest(a, b) {
   if (a.date !== b.date) return a.date < b.date ? 1 : -1;
   return (b.createdAt || 0) - (a.createdAt || 0);
+}
+
+export const isActive = (w) => w.status === 'active';
+export const isCardio = (w) => w.kind === 'cardio';
+
+/** Allenamento in corso (al massimo uno). */
+export function getActiveWorkout() {
+  return state.workouts.find(isActive) || null;
+}
+
+/** Id delle schede completate nella settimana corrente (lunedì-domenica). */
+export function templatesDoneThisWeek() {
+  const from = startOfWeek(todayISO());
+  const to = addDays(from, 6);
+  return new Set(state.workouts
+    .filter((w) => !isActive(w) && w.templateId && w.date >= from && w.date <= to)
+    .map((w) => w.templateId));
+}
+
+/** Prima scheda non ancora fatta questa settimana, nell'ordine A → D. */
+export function suggestedTemplate() {
+  const done = templatesDoneThisWeek();
+  return strengthTemplates().find((t) => !done.has(t.id)) || null;
+}
+
+/** Avvisa Home (e chiunque ascolti) che i dati sono cambiati. */
+function notifyChange() {
+  document.dispatchEvent(new CustomEvent('data-changed'));
 }
 
 /* ==========================================================================
@@ -90,83 +129,188 @@ function exerciseName(entry) {
 }
 
 /**
- * Trova l'ultima esecuzione di un esercizio prima dell'allenamento corrente.
- * Restituisce { date, sets } oppure null.
+ * Ultima esecuzione di un esercizio in un allenamento terminato, precedente
+ * a quello corrente. Restituisce { date, entry, sets } oppure null.
  */
 function lastPerformance(exerciseId, current) {
   for (const w of state.workouts) {
+    if (isActive(w)) continue;
     if (current && w.id === current.id) continue;
     if (current && w.date > current.date) continue; // solo sessioni precedenti
     const entry = (w.exercises || []).find((e) => e.exerciseId === exerciseId);
     if (entry) {
       const sets = completedSets(entry);
-      if (sets.length) return { date: w.date, sets };
+      if (sets.length) return { date: w.date, entry, sets };
     }
   }
   return null;
 }
 
+/**
+ * Regola di progressione: se l'ultima volta tutte le serie previste sono
+ * state fatte al massimo delle ripetizioni (es. 8 su 6-8), è ora di aumentare.
+ */
+function shouldIncrease(entry, current) {
+  const target = entry.target;
+  if (!target || !target.repMax) return false;
+  const last = lastPerformance(entry.exerciseId, current);
+  if (!last) return false;
+  const lastTarget = last.entry.target || target;
+  const needed = lastTarget.sets || target.sets;
+  const top = lastTarget.repMax || target.repMax;
+  return last.sets.length >= needed && last.sets.every((s) => s.reps >= top);
+}
+
 /* ==========================================================================
-   Storico (scheda principale)
+   Inizializzazione e scheda principale
    ========================================================================== */
 
 export async function initWorkouts() {
   await seedExercises();
+  await seedTemplates();
+  await Promise.all([loadTemplates(), loadTimerSetting()]);
   await load();
   renderList();
+
   $('#btn-library').addEventListener('click', openLibrary);
 
-  // Delega degli eventi sulla lista: un solo listener per tutte le card
+  // Delega degli eventi sulla lista: un solo listener per tutto
   $('#workouts-content').addEventListener('click', (e) => {
-    if (e.target.closest('[data-action="start"]')) return startWorkout();
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (action === 'start') return openStartSheet();
+    if (action === 'resume') return resumeActive();
+    if (action === 'free') return startFree();
+    if (action === 'edit-templates') return openTemplatesManager();
+    const tpl = e.target.closest('[data-template]');
+    if (tpl) return startTemplate(tpl.dataset.template);
     const card = e.target.closest('[data-workout]');
     if (card) {
       const w = state.workouts.find((x) => x.id === card.dataset.workout);
-      if (w) openEditor(structuredClone(w));
+      if (!w) return;
+      if (isCardio(w)) return openCardioRecord(w);
+      openEditor(structuredClone(w));
     }
   });
+
+  // Le schede modificate si riflettono subito nella lista
+  document.addEventListener('templates-changed', async () => {
+    await loadTemplates();
+    renderList();
+    notifyChange();
+  });
+
+  // Salvataggio immediato quando l'app va in background o viene chiusa
+  const flush = () => { if (state.current) saveNow(); };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+  window.addEventListener('pagehide', flush);
+
+  // Allenamento lasciato a metà: riapre subito l'editor dove eri rimasta
+  const active = getActiveWorkout();
+  if (active) openEditor(structuredClone(active), { resumed: true });
 }
 
 /** Ricarica i dati (es. dopo un'importazione) e ridisegna. */
 export async function refreshWorkouts() {
+  await loadTemplates();
   await load();
   renderList();
 }
 
 function renderList() {
   const root = $('#workouts-content');
+  const active = getActiveWorkout();
+  const done = templatesDoneThisWeek();
+  const history = state.workouts.filter((w) => !isActive(w));
+  let html = '';
 
-  if (state.workouts.length === 0) {
-    root.innerHTML = emptyState({
-      iconName: 'dumbbell',
-      title: 'Nessun allenamento ancora',
-      text: 'Registra la tua prima sessione: esercizi, serie, ripetizioni e peso. Il resto lo calcolo io.',
-      action: `<button class="btn btn-primary" data-action="start">${icon('plus')} Inizia allenamento</button>`,
-    });
-    return;
+  // Allenamento in corso
+  if (active) html += activeBanner(active);
+
+  // Schede
+  html += `
+    <div class="section-label" ${active ? '' : 'style="margin-top:0"'}>
+      <span>Schede</span>
+      <button class="btn-ghost link-btn" data-action="edit-templates">${icon('pencil')} Modifica</button>
+    </div>
+    <div class="tpl-grid fade-list">
+      ${strengthTemplates().map((t) => templateCard(t, done.has(t.id))).join('')}
+    </div>`;
+
+  const cardio = cardioTemplate();
+  if (cardio) {
+    const cardioDone = history.some((w) => isCardio(w) && w.date >= startOfWeek(todayISO()));
+    html += `
+      <button class="card card-tap tpl-cardio" data-template="${cardio.id}">
+        <span class="tpl-badge cardio ${cardioDone ? 'done' : ''}">${icon(cardioDone ? 'check' : 'heart-pulse')}</span>
+        <span class="row-main">
+          <span class="row-title">${esc(cardio.name)}</span>
+          <span class="row-sub">${cardioDone ? 'Fatto questa settimana' : 'Facoltativo · non conta nell\'obiettivo'}</span>
+        </span>
+        <span class="row-trail">${icon('chevron-right')}</span>
+      </button>`;
   }
 
-  let html = `
-    <button class="btn btn-primary btn-block hero-cta" data-action="start">
-      ${icon('plus')} Inizia allenamento
+  html += `
+    <button class="btn btn-ghost btn-block free-btn" data-action="free">
+      ${icon('plus')} Allenamento libero
     </button>`;
 
-  // Raggruppa per mese
-  let currentMonth = '';
-  let group = '';
-  const flush = () => { if (group) html += `<div class="fade-list">${group}</div>`; group = ''; };
-
-  for (const w of state.workouts) {
-    const month = w.date.slice(0, 7);
-    if (month !== currentMonth) {
-      flush();
-      currentMonth = month;
-      html += `<div class="month-label">${formatMonth(w.date)}</div>`;
+  // Storico
+  html += '<div class="section-label">Storico</div>';
+  if (history.length === 0) {
+    html += `<div class="card">${emptyState({
+      iconName: 'dumbbell',
+      compact: true,
+      title: 'Nessun allenamento ancora',
+      text: 'Scegli una scheda qui sopra: si apre già compilata con esercizi, serie e ripetizioni obiettivo.',
+      action: `<button class="btn btn-primary" data-action="start">${icon('play')} Inizia allenamento</button>`,
+    })}</div>`;
+  } else {
+    let currentMonth = '';
+    let group = '';
+    const flush = () => { if (group) html += `<div class="fade-list">${group}</div>`; group = ''; };
+    for (const w of history) {
+      const month = w.date.slice(0, 7);
+      if (month !== currentMonth) {
+        flush();
+        currentMonth = month;
+        html += `<div class="month-label">${formatMonth(w.date)}</div>`;
+      }
+      group += isCardio(w) ? cardioCard(w) : workoutCard(w);
     }
-    group += workoutCard(w);
+    flush();
   }
-  flush();
+
   root.innerHTML = html;
+}
+
+/** Riquadro "Allenamento in corso" (usato anche nella Home). */
+export function activeBanner(w) {
+  const st = workoutStats(w);
+  return `
+    <button class="card card-tap active-banner" data-action="resume">
+      <span class="pulse-dot"></span>
+      <span class="row-main">
+        <span class="ab-label">Allenamento in corso</span>
+        <span class="row-title">${w.templateCode ? `${esc(w.templateCode)} · ` : ''}${esc(w.name || 'Allenamento')}</span>
+        <span class="row-sub num">${st.sets} di ${st.totalSets} serie completate</span>
+      </span>
+      <span class="ab-cta">Riprendi ${icon('chevron-right')}</span>
+    </button>`;
+}
+
+function templateCard(t, doneThisWeek) {
+  const last = state.workouts.find((w) => !isActive(w) && w.templateId === t.id);
+  const sub = last ? `Ultima ${formatShortDate(last.date)}` : 'Mai fatta';
+  return `
+    <button class="card card-tap tpl-card" data-template="${t.id}">
+      <span class="tpl-top">
+        <span class="tpl-badge ${doneThisWeek ? 'done' : ''}">${esc(t.code)}</span>
+        ${doneThisWeek ? `<span class="tpl-check">${icon('check')}</span>` : ''}
+      </span>
+      <span class="tpl-name">${esc(t.name)}</span>
+      <span class="tpl-sub">${t.exercises.length} esercizi · ${esc(sub)}</span>
+    </button>`;
 }
 
 function workoutCard(w) {
@@ -181,7 +325,7 @@ function workoutCard(w) {
   return `
     <article class="card card-tap workout-card" data-workout="${w.id}">
       <div class="wc-head">
-        <div class="wc-title">${esc(w.name || 'Allenamento')}</div>
+        <div class="wc-title">${w.templateCode ? `<span class="mini-badge">${esc(w.templateCode)}</span>` : ''}${esc(w.name || 'Allenamento')}</div>
         <div class="wc-date">${esc(formatDay(w.date))}</div>
       </div>
       <div class="wc-stats">
@@ -193,36 +337,237 @@ function workoutCard(w) {
     </article>`;
 }
 
+function cardioCard(w) {
+  return `
+    <article class="card card-tap workout-card cardio-card" data-workout="${w.id}">
+      <div class="wc-head" style="align-items:center">
+        <div class="wc-title" style="display:flex;align-items:center;gap:10px">
+          <span class="tpl-badge cardio done small">${icon('check')}</span>${esc(w.name || 'Cardio')}
+        </div>
+        <div class="wc-date">${esc(formatDay(w.date))}</div>
+      </div>
+    </article>`;
+}
+
+/* ==========================================================================
+   Avvio di un allenamento
+   ========================================================================== */
+
+/** Foglio "Scegli la scheda" (dalla Home o dal pulsante Inizia). */
+export function openStartSheet() {
+  const active = getActiveWorkout();
+  if (active) return resumeActive();
+
+  const done = templatesDoneThisWeek();
+  const next = suggestedTemplate();
+  const cardio = cardioTemplate();
+
+  const rows = strengthTemplates().map((t) => `
+    <button class="list-row" data-template="${t.id}">
+      <span class="tpl-badge ${done.has(t.id) ? 'done' : ''}">${esc(t.code)}</span>
+      <span class="row-main">
+        <span class="row-title">${esc(t.name)}</span>
+        <span class="row-sub">${t.exercises.length} esercizi${done.has(t.id) ? ' · fatta questa settimana' : ''}</span>
+      </span>
+      ${next && next.id === t.id ? '<span class="pill-accent">Consigliata</span>' : `<span class="row-trail">${icon('chevron-right')}</span>`}
+    </button>`).join('');
+
+  const s = openSheet({
+    title: 'Scegli la scheda',
+    html: `
+      <div class="list">${rows}</div>
+      ${cardio ? `
+        <div class="list" style="margin-top:var(--s-3)">
+          <button class="list-row" data-template="${cardio.id}">
+            <span class="tpl-badge cardio">${icon('heart-pulse')}</span>
+            <span class="row-main"><span class="row-title">${esc(cardio.name)}</span>
+            <span class="row-sub">Facoltativo · non conta nell'obiettivo</span></span>
+            <span class="row-trail">${icon('chevron-right')}</span>
+          </button>
+        </div>` : ''}
+      <button class="btn btn-ghost btn-block" data-free style="margin-top:var(--s-3)">${icon('plus')} Allenamento libero</button>`,
+  });
+
+  s.body.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-template]');
+    if (row) { s.close(); startTemplate(row.dataset.template); return; }
+    if (e.target.closest('[data-free]')) { s.close(); startFree(); }
+  });
+}
+
+/** Riapre l'allenamento in corso. */
+export function resumeActive() {
+  const active = getActiveWorkout();
+  if (active) openEditor(structuredClone(active));
+}
+
+/** Se c'è già un allenamento in corso, propone di riprenderlo. */
+async function guardActive() {
+  const active = getActiveWorkout();
+  if (!active) return false;
+  const ok = await confirmSheet({
+    title: 'Hai un allenamento in corso',
+    message: `«${active.templateCode ? `${active.templateCode} · ` : ''}${active.name || 'Allenamento'}» non è ancora terminato. ` +
+      'Riprendilo e premi "Termina allenamento" prima di iniziarne un altro.',
+    confirmLabel: 'Riprendi allenamento',
+  });
+  if (ok) resumeActive();
+  return true;
+}
+
+/** Inizia una scheda: esercizi, serie e pesi dell'ultima volta già compilati. */
+export async function startTemplate(templateId) {
+  const t = getTemplate(templateId);
+  if (!t) return;
+  if (t.kind === 'cardio') return openCardioSheet(t);
+  if (await guardActive()) return;
+
+  haptic();
+  const now = Date.now();
+  const w = {
+    id: db.uid(),
+    date: todayISO(),
+    name: t.name,
+    templateId: t.id,
+    templateCode: t.code,
+    status: 'active',
+    exercises: [],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+  };
+  w.exercises = t.exercises.map((te) => entryFromTemplate(te, w));
+  await db.put('workouts', w);
+  state.workouts.unshift(w);
+  state.workouts.sort(byNewest);
+  renderList();
+  notifyChange();
+  openEditor(structuredClone(w));
+}
+
+/** Esercizio della scheda → voce dell'allenamento con le serie precompilate. */
+function entryFromTemplate(te, workout) {
+  const last = lastPerformance(te.exerciseId, workout);
+  const sets = Array.from({ length: te.sets }, (_, i) => {
+    // Peso usato l'ultima volta nella stessa serie (o nell'ultima disponibile)
+    const ls = last ? (last.sets[i] || last.sets[last.sets.length - 1]) : null;
+    return { weight: ls ? ls.weight : null, reps: null, done: false };
+  });
+  return {
+    exerciseId: te.exerciseId,
+    name: te.name,
+    target: { sets: te.sets, repMin: te.repMin, repMax: te.repMax, unit: te.unit || '' },
+    sets,
+  };
+}
+
+/** Allenamento libero: si parte vuoti e si scelgono gli esercizi. */
+async function startFree() {
+  if (await guardActive()) return;
+  haptic();
+  const now = Date.now();
+  const w = {
+    id: db.uid(), date: todayISO(), name: '', status: 'active', exercises: [],
+    createdAt: now, startedAt: now, updatedAt: now,
+  };
+  await db.put('workouts', w);
+  state.workouts.unshift(w);
+  state.workouts.sort(byNewest);
+  openEditor(structuredClone(w), { pickFirst: true });
+}
+
+/* --- Cardio: basta segnarlo come fatto ---------------------------------- */
+
+export function openCardioSheet(t) {
+  const today = todayISO();
+  const doneToday = state.workouts.some((w) => isCardio(w) && w.date === today);
+  const s = openSheet({
+    title: t.name,
+    html: `
+      <div class="card notes-card">${notesHTML(t.notes)}</div>
+      <p class="footnote">Facoltativo: non conta nell'obiettivo dei 4 allenamenti settimanali.</p>
+      <div class="sheet-actions">
+        <button class="btn btn-primary btn-block" data-done>${icon('check')} ${doneToday ? 'Segna di nuovo come fatto' : 'Segna come fatto'}</button>
+        <button class="btn btn-secondary btn-block" data-close>Chiudi</button>
+      </div>`,
+  });
+  $('[data-done]', s.body).addEventListener('click', async () => {
+    const now = Date.now();
+    const w = {
+      id: db.uid(), date: today, name: t.name, kind: 'cardio', templateId: t.id,
+      templateCode: t.code, status: 'done', exercises: [], createdAt: now, updatedAt: now, finishedAt: now,
+    };
+    await db.put('workouts', w);
+    state.workouts.unshift(w);
+    state.workouts.sort(byNewest);
+    s.close();
+    renderList();
+    notifyChange();
+    haptic(15);
+    toast('Cardio registrato');
+  });
+}
+
+/** Cardio già registrato: si può cambiare la data o eliminarlo. */
+function openCardioRecord(w) {
+  const s = openSheet({
+    title: w.name || 'Cardio',
+    html: `
+      <label class="field">
+        <span class="field-label">Data</span>
+        <input class="input" type="date" data-date value="${w.date}" max="${todayISO()}">
+      </label>
+      <div class="sheet-actions">
+        <button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button>
+        <button class="btn btn-danger btn-block" data-delete>${icon('trash-2')} Elimina</button>
+      </div>`,
+  });
+  $('[data-save]', s.body).addEventListener('click', async () => {
+    const date = $('[data-date]', s.body).value;
+    if (date) w.date = date;
+    w.updatedAt = Date.now();
+    await db.put('workouts', w);
+    state.workouts.sort(byNewest);
+    s.close();
+    renderList();
+    notifyChange();
+  });
+  $('[data-delete]', s.body).addEventListener('click', async () => {
+    await db.del('workouts', w.id);
+    state.workouts = state.workouts.filter((x) => x.id !== w.id);
+    s.close();
+    renderList();
+    notifyChange();
+    toast('Cardio eliminato');
+  });
+}
+
 /* ==========================================================================
    Editor allenamento
    ========================================================================== */
 
-async function startWorkout() {
-  haptic();
-  const now = Date.now();
-  const w = { id: db.uid(), date: todayISO(), name: '', exercises: [], createdAt: now, updatedAt: now };
-  await db.put('workouts', w);
-  state.workouts.unshift(w);
-  state.workouts.sort(byNewest);
-  openEditor(structuredClone(w), { isNew: true });
-}
-
-function openEditor(workout, { isNew = false } = {}) {
+function openEditor(workout, { pickFirst = false, resumed = false } = {}) {
   state.current = workout;
   const ed = $('#workout-editor');
+  const active = isActive(workout);
 
   ed.innerHTML = `
     <header class="topbar scrolled">
-      <button class="back-btn" data-action="close">${icon('chevron-left')}<span>Storico</span></button>
+      <button class="back-btn" data-action="close">${icon('chevron-left')}<span>${active ? 'Indietro' : 'Storico'}</span></button>
       <span class="topbar-title" id="ed-topbar-title"></span>
       <div class="topbar-actions">
+        <button class="icon-btn ${isTimerEnabled() ? 'on' : ''}" data-action="toggle-timer" id="ed-timer"
+                aria-label="Timer di recupero">${icon(isTimerEnabled() ? 'timer' : 'timer-off')}</button>
         <button class="icon-btn" data-action="delete-workout" aria-label="Elimina allenamento">${icon('trash-2')}</button>
-        <button class="btn btn-ghost" data-action="close" style="font-weight:600">Fine</button>
+        ${active ? '' : '<button class="btn btn-ghost" data-action="close" style="font-weight:600">Fine</button>'}
       </div>
     </header>
 
-    <input class="title-input" id="ed-name" placeholder="Allenamento" maxlength="60"
-           value="${esc(workout.name)}" autocomplete="off" enterkeyhint="done">
+    <div class="ed-title-row">
+      ${workout.templateCode ? `<span class="tpl-badge">${esc(workout.templateCode)}</span>` : ''}
+      <input class="title-input" id="ed-name" placeholder="Allenamento" maxlength="60"
+             value="${esc(workout.name)}" autocomplete="off" enterkeyhint="done">
+    </div>
 
     <div class="editor-meta">
       <label class="date-pill">
@@ -237,7 +582,11 @@ function openEditor(workout, { isNew = false } = {}) {
     <button class="btn btn-secondary btn-block" data-action="add-exercise" style="margin-top:var(--s-3)">
       ${icon('plus')} Aggiungi esercizio
     </button>
-    <p class="hint" id="ed-hint">Tocca ${'✓'} per salvare una serie · scorri a sinistra per eliminarla</p>
+    ${active ? `
+      <button class="btn btn-primary btn-block finish-btn" data-action="finish">
+        ${icon('flag')} Termina allenamento
+      </button>` : ''}
+    <p class="hint">Tocca ${'✓'} per salvare una serie · scorri a sinistra per eliminarla</p>
     <div class="save-state" id="ed-save" style="justify-content:center;width:100%;margin-top:var(--s-2);opacity:0">
       ${icon('cloud-check')} Salvato
     </div>`;
@@ -254,21 +603,23 @@ function openEditor(workout, { isNew = false } = {}) {
 
   bindEditorOnce(ed);
 
-  // Nuovo allenamento: proponi subito di scegliere il primo esercizio
-  if (isNew) setTimeout(openExercisePicker, 380);
+  if (resumed) toast('Allenamento in corso ripreso');
+  if (pickFirst) setTimeout(openExercisePicker, 380);
 }
 
 function renderDate() {
   const w = state.current;
   $('#ed-date-label').textContent = formatDay(w.date);
-  $('#ed-topbar-title').textContent = formatShortDate(w.date);
+  $('#ed-topbar-title').textContent = w.templateCode ? `${w.templateCode} · ${formatShortDate(w.date)}` : formatShortDate(w.date);
 }
 
 function updateSummary() {
+  const el = $('#ed-summary');
+  if (!el || !state.current) return;
   const st = workoutStats(state.current);
-  const parts = [`${st.exercises} ${st.exercises === 1 ? 'esercizio' : 'esercizi'}`, `${st.sets} serie`];
+  const parts = [`${st.sets}/${st.totalSets} serie`];
   if (st.volume > 0) parts.push(`${fmtInt(st.volume)} kg`);
-  $('#ed-summary').textContent = parts.join(' · ');
+  el.textContent = parts.join(' · ');
 }
 
 function renderExercises(newIndex = -1) {
@@ -294,50 +645,57 @@ function rerenderCard(i) {
 }
 
 function exerciseCard(entry, i, isNew) {
+  const t = entry.target;
   const last = lastPerformance(entry.exerciseId, state.current);
   let ref;
   if (last) {
     const sets = last.sets.slice(0, 4).map((s) => `${fmtNum(s.weight || 0)}×${s.reps}`).join(' · ');
     const more = last.sets.length > 4 ? ' …' : '';
-    ref = `${icon('history')}<span>${esc(formatShortDate(last.date))} · <b class="num">${sets}${more}</b></span>`;
+    ref = `${icon('history')}<span>Ultima volta ${esc(formatShortDate(last.date))} · <b class="num">${sets}${more}</b></span>`;
   } else {
     ref = `${icon('sparkles')}<span>Prima volta: nessun riferimento</span>`;
   }
+
+  const increase = shouldIncrease(entry, state.current);
+  const unit = t ? UNIT_SHORT[t.unit || ''] : '';
 
   return `
     <div class="card ex-card" data-ex="${i}" ${isNew ? '' : 'style="animation:none"'}>
       <div class="ex-head">
         <div style="min-width:0">
           <div class="ex-name">${esc(exerciseName(entry))}</div>
+          ${t ? `<div class="ex-target num">${icon('target')}<span>Obiettivo <b>${esc(targetText(t))}</b></span></div>` : ''}
           <div class="ex-ref">${ref}</div>
+          ${increase ? `<div class="hint-pill">${icon('trending-up')} Aumenta il peso</div>` : ''}
         </div>
         <button class="ex-menu" data-action="ex-menu" aria-label="Opzioni esercizio">${icon('ellipsis')}</button>
       </div>
-      <div class="sets-head"><span>Serie</span><span>Kg</span><span>Rep</span><span></span></div>
-      <div class="sets">${entry.sets.map((s, j) => setRow(s, j)).join('')}</div>
+      <div class="sets-head"><span>Serie</span><span>Kg</span><span>Rep${unit ? ` /${unit}` : ''}</span><span></span></div>
+      <div class="sets">${entry.sets.map((s, j) => setRow(s, j, t)).join('')}</div>
       <button class="add-set" data-action="add-set">${icon('plus')} Aggiungi serie</button>
     </div>`;
 }
 
-function setRow(s, j) {
+function setRow(s, j, target) {
+  const repsHint = target ? repRange(target.repMin, target.repMax) : '–';
   return `
     <div class="set-wrap" data-set="${j}">
       <div class="set-delete">${icon('trash-2')} Elimina</div>
       <div class="set-row ${s.done ? 'done' : ''}">
         <div class="set-num num">${j + 1}</div>
-        ${stepper('weight', s.weight, 'decimal')}
-        ${stepper('reps', s.reps, 'numeric')}
+        ${stepper('weight', s.weight, 'decimal', '–')}
+        ${stepper('reps', s.reps, 'numeric', repsHint)}
         <button class="set-check" data-action="toggle-set" aria-label="Completa serie">${icon('check')}</button>
       </div>
     </div>`;
 }
 
-function stepper(field, value, mode) {
+function stepper(field, value, mode, placeholder) {
   const label = field === 'weight' ? 'peso' : 'ripetizioni';
   return `
     <div class="stepper" data-field="${field}">
       <button data-step="-1" aria-label="Diminuisci ${label}">${icon('minus')}</button>
-      <input type="text" inputmode="${mode}" value="${fmtNum(value)}" placeholder="–"
+      <input type="text" inputmode="${mode}" value="${fmtNum(value)}" placeholder="${placeholder}"
              autocomplete="off" aria-label="${label}">
       <button data-step="1" aria-label="Aumenta ${label}">${icon('plus')}</button>
     </div>`;
@@ -347,24 +705,28 @@ function stepper(field, value, mode) {
 
 let saveTimer = null;
 
+/** Salvataggio ritardato (mentre si digita). */
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveNow, 350);
+  saveTimer = setTimeout(saveNow, 300);
   updateSummary();
 }
 
+/** Salvataggio immediato su IndexedDB. */
 async function saveNow() {
   clearTimeout(saveTimer);
   const w = state.current;
   if (!w) return;
   w.updatedAt = Date.now();
-  await db.put('workouts', structuredClone(w));
+  const copy = structuredClone(w);
+  await db.put('workouts', copy);
 
   // Aggiorna la copia nella lista
   const idx = state.workouts.findIndex((x) => x.id === w.id);
-  if (idx >= 0) state.workouts[idx] = structuredClone(w);
-  else state.workouts.push(structuredClone(w));
+  if (idx >= 0) state.workouts[idx] = structuredClone(copy);
+  else state.workouts.push(structuredClone(copy));
   state.workouts.sort(byNewest);
+  updateSummary();
 
   const ind = $('#ed-save');
   if (ind) {
@@ -374,8 +736,8 @@ async function saveNow() {
   }
 }
 
+/** Chiude l'editor. Un allenamento in corso resta in corso. */
 async function closeEditor() {
-  const ed = $('#workout-editor');
   if (document.activeElement) document.activeElement.blur();
   await saveNow();
 
@@ -385,14 +747,63 @@ async function closeEditor() {
     await db.del('workouts', w.id);
     state.workouts = state.workouts.filter((x) => x.id !== w.id);
   }
-  state.current = null;
+  hideEditor();
+}
 
+function hideEditor() {
+  const ed = $('#workout-editor');
+  state.current = null;
+  stopRest();
   ed.classList.add('closing');
   ed.classList.remove('open');
   ed.setAttribute('aria-hidden', 'true');
   $('#tabbar').classList.remove('hidden');
   setTimeout(() => { ed.classList.remove('closing'); ed.innerHTML = ''; }, 400);
   renderList();
+  notifyChange();
+}
+
+/** "Termina allenamento": registra nello storico. */
+async function finishWorkout() {
+  const w = state.current;
+  if (document.activeElement) document.activeElement.blur();
+  const st = workoutStats(w);
+
+  if (st.sets === 0) {
+    const ok = await confirmSheet({
+      title: 'Nessuna serie completata',
+      message: 'Non hai segnato nessuna serie con la spunta. Vuoi eliminare questo allenamento?',
+      confirmLabel: 'Elimina allenamento',
+      danger: true,
+    });
+    if (!ok) return;
+    clearTimeout(saveTimer);
+    await db.del('workouts', w.id);
+    state.workouts = state.workouts.filter((x) => x.id !== w.id);
+    hideEditor();
+    return;
+  }
+
+  const pending = st.totalSets - st.sets;
+  if (pending > 0) {
+    const ok = await confirmSheet({
+      title: 'Terminare l\'allenamento?',
+      message: `${pending} ${pending === 1 ? 'serie non è stata completata e non verrà registrata' : 'serie non sono state completate e non verranno registrate'}.`,
+      confirmLabel: 'Termina allenamento',
+    });
+    if (!ok) return;
+  }
+
+  // Nello storico restano solo le serie completate
+  w.exercises = w.exercises
+    .map((e) => ({ ...e, sets: e.sets.filter((s) => s.done && (s.reps || 0) > 0) }))
+    .filter((e) => e.sets.length > 0);
+  w.status = 'done';
+  w.finishedAt = Date.now();
+  await saveNow();
+  hideEditor();
+  haptic(20);
+  toast('Allenamento registrato');
 }
 
 /* --- Eventi dell'editor (registrati una sola volta, con delega) ---------- */
@@ -414,10 +825,16 @@ function bindEditorOnce(ed) {
     if (stepBtn) {
       const wrap = t.closest('.set-wrap');
       const field = t.closest('.stepper').dataset.field;
-      const setIndex = Number(wrap.dataset.set);
-      const s = state.current.exercises[exIndex].sets[setIndex];
-      const step = (field === 'weight' ? WEIGHT_STEP : REPS_STEP) * Number(stepBtn.dataset.step);
-      const next = Math.max(0, Math.round(((s[field] || 0) + step) * 100) / 100);
+      const entry = state.current.exercises[exIndex];
+      const s = entry.sets[Number(wrap.dataset.set)];
+      let next;
+      if (field === 'reps' && s.reps === null && entry.target) {
+        // Primo tocco su ripetizioni vuote: parte dal minimo dell'obiettivo
+        next = entry.target.repMin;
+      } else {
+        const step = (field === 'weight' ? WEIGHT_STEP : REPS_STEP) * Number(stepBtn.dataset.step);
+        next = Math.max(0, Math.round(((s[field] || 0) + step) * 100) / 100);
+      }
       s[field] = next;
       $(`.stepper[data-field="${field}"] input`, wrap).value = fmtNum(next);
       haptic(5);
@@ -427,8 +844,10 @@ function bindEditorOnce(ed) {
 
     switch (action) {
       case 'close': return closeEditor();
+      case 'finish': return finishWorkout();
       case 'add-exercise': return openExercisePicker();
       case 'delete-workout': return deleteCurrentWorkout();
+      case 'toggle-timer': return toggleTimer();
       case 'ex-menu': return openExerciseMenu(exIndex);
       case 'add-set': return addSet(exIndex);
       case 'toggle-set': return toggleSet(exIndex, Number(t.closest('.set-wrap').dataset.set));
@@ -454,7 +873,7 @@ function bindEditorOnce(ed) {
     scheduleSave();
   });
 
-  // Uscendo dal campo, il valore viene riscritto in formato pulito (es. "62.50" → "62,5")
+  // Uscendo dal campo: valore riscritto in formato pulito e salvataggio immediato
   ed.addEventListener('focusout', (e) => {
     const stepperEl = e.target.closest('.stepper');
     if (!stepperEl) return;
@@ -463,6 +882,7 @@ function bindEditorOnce(ed) {
     if (!card || !wrap) return;
     const s = state.current?.exercises[Number(card.dataset.ex)]?.sets[Number(wrap.dataset.set)];
     if (s) e.target.value = fmtNum(s[stepperEl.dataset.field]);
+    if (state.current) saveNow();
   });
 
   // Toccando un campo, il contenuto viene selezionato per sostituirlo subito
@@ -478,11 +898,21 @@ function bindEditorOnce(ed) {
       state.current.date = e.target.value;
       renderDate();
       renderExercises(); // i riferimenti "ultima volta" dipendono dalla data
-      scheduleSave();
+      saveNow();
     }
   });
 
   bindSwipeToDelete(ed);
+}
+
+function toggleTimer() {
+  const on = !isTimerEnabled();
+  setTimerEnabled(on);
+  const btn = $('#ed-timer');
+  btn.classList.toggle('on', on);
+  btn.innerHTML = icon(on ? 'timer' : 'timer-off');
+  haptic(5);
+  toast(on ? 'Timer di recupero attivo' : 'Timer di recupero disattivato');
 }
 
 function addSet(exIndex) {
@@ -492,13 +922,13 @@ function addSet(exIndex) {
   entry.sets.push({ weight: prev ? prev.weight : null, reps: prev ? prev.reps : null, done: false });
   haptic(5);
   const card = $(`.ex-card[data-ex="${exIndex}"]`);
-  $('.sets', card).insertAdjacentHTML('beforeend', setRow(entry.sets[entry.sets.length - 1], entry.sets.length - 1));
+  $('.sets', card).insertAdjacentHTML('beforeend', setRow(entry.sets[entry.sets.length - 1], entry.sets.length - 1, entry.target));
   const added = $('.sets', card).lastElementChild;
   added.animate(
     [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }],
     { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
   );
-  scheduleSave();
+  saveNow();
 }
 
 function toggleSet(exIndex, setIndex) {
@@ -523,15 +953,17 @@ function toggleSet(exIndex, setIndex) {
     void row.offsetWidth; // fa ripartire l'animazione
     row.classList.add('just-done');
     haptic(15);
+    // Recupero: più lungo dopo il primo esercizio della scheda
+    startRest(exIndex === 0 ? REST_FIRST : REST_OTHERS);
   }
-  scheduleSave();
+  saveNow(); // ogni serie è salvata subito
 }
 
 function removeSet(exIndex, setIndex) {
   const entry = state.current.exercises[exIndex];
   entry.sets.splice(setIndex, 1);
   rerenderCard(exIndex);
-  scheduleSave();
+  saveNow();
 }
 
 /** Scorrere una serie verso sinistra mostra "Elimina"; oltre la soglia la elimina. */
@@ -624,7 +1056,8 @@ function openExerciseMenu(exIndex) {
         <button class="list-row" data-m="remove">
           <span class="row-icon danger">${icon('trash-2')}</span><span class="row-main"><span class="row-title" style="color:var(--danger)">Rimuovi dall'allenamento</span></span>
         </button>
-      </div>`,
+      </div>
+      <p class="footnote">Le modifiche valgono solo per questo allenamento. Per cambiare la scheda usa "Modifica" nella sezione Allenamenti.</p>`,
   });
 
   s.body.addEventListener('click', (e) => {
@@ -633,22 +1066,21 @@ function openExerciseMenu(exIndex) {
     if (m === 'up' || m === 'down') {
       const to = m === 'up' ? exIndex - 1 : exIndex + 1;
       [entries[exIndex], entries[to]] = [entries[to], entries[exIndex]];
-      renderExercises();
-      scheduleSave();
     } else if (m === 'remove') {
       entries.splice(exIndex, 1);
-      renderExercises();
-      scheduleSave();
     }
+    renderExercises();
+    saveNow();
     s.close();
   });
 }
 
 async function deleteCurrentWorkout() {
+  const active = isActive(state.current);
   const ok = await confirmSheet({
-    title: 'Eliminare l\'allenamento?',
+    title: active ? 'Annullare l\'allenamento?' : 'Eliminare l\'allenamento?',
     message: 'L\'allenamento e tutte le sue serie verranno eliminati definitivamente.',
-    confirmLabel: 'Elimina allenamento',
+    confirmLabel: active ? 'Annulla allenamento' : 'Elimina allenamento',
     danger: true,
   });
   if (!ok) return;
@@ -656,15 +1088,8 @@ async function deleteCurrentWorkout() {
   clearTimeout(saveTimer);
   await db.del('workouts', id);
   state.workouts = state.workouts.filter((w) => w.id !== id);
-  state.current.exercises = []; // così closeEditor non lo risalva
-  state.current = null;
-  const ed = $('#workout-editor');
-  ed.classList.add('closing');
-  ed.classList.remove('open');
-  $('#tabbar').classList.remove('hidden');
-  setTimeout(() => { ed.classList.remove('closing'); ed.innerHTML = ''; }, 400);
-  renderList();
-  toast('Allenamento eliminato');
+  hideEditor();
+  toast(active ? 'Allenamento annullato' : 'Allenamento eliminato');
 }
 
 /* ==========================================================================
@@ -726,33 +1151,42 @@ async function createExercise(name) {
   return ex;
 }
 
-/** Foglio per scegliere l'esercizio da aggiungere all'allenamento aperto. */
-function openExercisePicker() {
-  if (!state.current) return;
-  const s = openSheet({
-    title: 'Aggiungi esercizio',
-    tall: true,
-    html: `${searchBox('Cerca o crea un esercizio')}<div data-results>${libraryRows('', { forPicker: true })}</div>`,
-  });
-  const input = $('[data-search]', s.body);
-  const results = $('[data-results]', s.body);
-  input.addEventListener('input', () => {
-    results.innerHTML = libraryRows(input.value, { forPicker: true });
-  });
-
-  results.addEventListener('click', async (e) => {
-    const createBtn = e.target.closest('[data-create]');
-    const exBtn = e.target.closest('[data-ex-id]');
-    let ex = null;
-    if (createBtn) ex = await createExercise(createBtn.dataset.create);
-    else if (exBtn) ex = state.exercises.find((x) => x.id === exBtn.dataset.exId);
-    if (!ex) return;
-    s.close();
-    addExerciseToWorkout(ex);
+/**
+ * Foglio di scelta di un esercizio dalla libreria (con ricerca e creazione).
+ * Restituisce una Promise con l'esercizio scelto, oppure null se si chiude.
+ */
+export function pickExercise({ title = 'Aggiungi esercizio' } = {}) {
+  return new Promise((resolve) => {
+    let chosen = null;
+    const s = openSheet({
+      title,
+      tall: true,
+      html: `${searchBox('Cerca o crea un esercizio')}<div data-results>${libraryRows('', { forPicker: true })}</div>`,
+      onClose: () => resolve(chosen),
+    });
+    const input = $('[data-search]', s.body);
+    const results = $('[data-results]', s.body);
+    input.addEventListener('input', () => {
+      results.innerHTML = libraryRows(input.value, { forPicker: true });
+    });
+    results.addEventListener('click', async (e) => {
+      const createBtn = e.target.closest('[data-create]');
+      const exBtn = e.target.closest('[data-ex-id]');
+      if (createBtn) chosen = await createExercise(createBtn.dataset.create);
+      else if (exBtn) chosen = state.exercises.find((x) => x.id === exBtn.dataset.exId) || null;
+      if (chosen) s.close();
+    });
   });
 }
 
-/** Aggiunge l'esercizio, precompilando le serie con i valori dell'ultima volta. */
+/** Aggiunge un esercizio all'allenamento aperto. */
+async function openExercisePicker() {
+  if (!state.current) return;
+  const ex = await pickExercise();
+  if (ex && state.current) addExerciseToWorkout(ex);
+}
+
+/** Esercizio fuori scheda: serie precompilate con i valori dell'ultima volta. */
 function addExerciseToWorkout(ex) {
   const last = lastPerformance(ex.id, state.current);
   const sets = last
@@ -761,7 +1195,7 @@ function addExerciseToWorkout(ex) {
   state.current.exercises.push({ exerciseId: ex.id, name: ex.name, sets });
   const i = state.current.exercises.length - 1;
   renderExercises(i);
-  scheduleSave();
+  saveNow();
   haptic();
   // Porta in vista la nuova card
   setTimeout(() => {
@@ -820,7 +1254,7 @@ function editExercise(ex, onDone) {
 
     ex.name = name;
     await db.put('exercises', ex);
-    // Aggiorna il nome anche negli allenamenti già registrati
+    // Aggiorna il nome anche negli allenamenti già registrati e nelle schede
     const touched = [];
     for (const w of state.workouts) {
       let changed = false;
@@ -830,6 +1264,7 @@ function editExercise(ex, onDone) {
       if (changed) touched.push(w);
     }
     if (touched.length) await db.putMany('workouts', touched);
+    await renameExerciseInTemplates(ex.id, name);
     state.exercises.sort((a, b) => a.name.localeCompare(b.name, 'it'));
     s.close();
     onDone();
@@ -841,7 +1276,7 @@ function editExercise(ex, onDone) {
     s.close();
     const ok = await confirmSheet({
       title: `Eliminare «${ex.name}»?`,
-      message: 'L\'esercizio sparirà dalla libreria. Gli allenamenti già registrati restano invariati.',
+      message: 'L\'esercizio sparirà dalla libreria. Gli allenamenti già registrati e le schede restano invariati.',
       confirmLabel: 'Elimina',
       danger: true,
     });
