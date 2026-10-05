@@ -3,7 +3,7 @@
    --------------------------------------------------------------------------
    - Registra il service worker (uso offline)
    - Chiede l'archiviazione persistente
-   - Avvia le tre sezioni e gestisce la barra delle schede
+   - Avvia le sezioni (Home, Allenamenti, Dieta, Progressi) e la barra delle schede
    ========================================================================== */
 
 import { openDB, requestPersistence } from './db.js';
@@ -11,6 +11,7 @@ import { $, $$, hydrateIcons, bindScrollHeader, haptic, toast } from './ui.js';
 import { initWorkouts, refreshWorkouts } from './workouts.js';
 import { initDiet, refreshDiet } from './diet.js';
 import { initProgress, renderProgress } from './progress.js';
+import { initHome, renderHome } from './home.js';
 
 /* --- Comportamento da app nativa ---------------------------------------- */
 
@@ -21,7 +22,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 
 /* --- Navigazione tra le schede ------------------------------------------ */
 
-let currentView = 'workouts';
+let currentView = 'home';
 
 function showView(name) {
   if (name === currentView) {
@@ -39,6 +40,7 @@ function showView(name) {
   });
   // I grafici vanno disegnati quando la scheda è visibile (servono le dimensioni)
   if (name === 'progress') renderProgress();
+  if (name === 'home') renderHome();
 }
 
 /* --- Avvio --------------------------------------------------------------- */
@@ -57,13 +59,23 @@ async function start() {
     return;
   }
 
+  initHome();
   await Promise.all([
     initWorkouts(),
     initDiet(),
   ]);
+  await renderHome();
   initProgress({
     // Dopo un'importazione aggiorna tutte le sezioni
-    onImported: () => Promise.all([refreshWorkouts(), refreshDiet()]),
+    onImported: async () => {
+      await Promise.all([refreshWorkouts(), refreshDiet()]);
+      await renderHome();
+    },
+  });
+
+  // Quando un allenamento cambia (iniziato, terminato, eliminato) la Home si aggiorna
+  document.addEventListener('data-changed', () => {
+    if (currentView === 'home') renderHome();
   });
 
   // Archiviazione persistente: il browser non cancellerà i dati se manca spazio
@@ -73,6 +85,16 @@ async function start() {
 /* --- Service worker ------------------------------------------------------ */
 
 if ('serviceWorker' in navigator) {
+  // Quando arriva una nuova versione dell'app (dopo un aggiornamento su GitHub)
+  // la pagina si ricarica una volta da sola. I dati sono già tutti salvati.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    window.location.reload();
+  });
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch((err) => {
       console.warn('Service worker non registrato:', err);

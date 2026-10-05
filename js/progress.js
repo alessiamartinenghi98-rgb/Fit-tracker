@@ -29,7 +29,7 @@ const state = {
   workouts: [],
   exercises: [],
   freqMode: 'weeks',     // 'weeks' | 'months'
-  metric: 'max',         // 'max' | 'volume'
+  metric: 'max',         // 'max' | 'reps' | 'volume'
   exerciseId: null,      // esercizio selezionato nel grafico
   charts: {},            // istanze Chart.js (da distruggere prima di ridisegnare)
   onImported: null,      // callback dopo un'importazione
@@ -84,8 +84,10 @@ function applyChartDefaults() {
 
 async function load() {
   const [workouts, exercises] = await Promise.all([db.getAll('workouts'), db.getAll('exercises')]);
-  // Contano solo gli allenamenti con almeno un esercizio
-  state.workouts = workouts.filter((w) => (w.exercises || []).length > 0).sort(byNewest);
+  // Contano solo gli allenamenti terminati con almeno un esercizio (il cardio è escluso)
+  state.workouts = workouts
+    .filter((w) => w.status !== 'active' && w.kind !== 'cardio' && (w.exercises || []).length > 0)
+    .sort(byNewest);
   state.exercises = exercises;
 }
 
@@ -128,9 +130,14 @@ function exerciseSeries(exerciseId) {
       if (e.exerciseId !== exerciseId) continue;
       const sets = completedSets(e);
       if (!sets.length) continue;
+      // Serie più pesante della sessione (a parità di peso, quella con più ripetizioni)
+      const top = sets.reduce((best, s) => (
+        (s.weight || 0) > (best.weight || 0) || ((s.weight || 0) === (best.weight || 0) && s.reps > best.reps) ? s : best
+      ));
       points.push({
         date: w.date,
-        max: Math.max(...sets.map((s) => s.weight || 0)),
+        max: top.weight || 0,
+        reps: top.reps,
         volume: entryVolume(e),
         sets: sets.length,
       });
@@ -234,13 +241,14 @@ function exerciseSection() {
         <span>${esc(current.name)}</span>${icon('chevron-down')}
       </button>
       <div class="seg" id="seg-metric" style="margin-bottom:var(--s-4)">
-        <button data-value="max" class="${state.metric === 'max' ? 'active' : ''}">Peso massimo</button>
+        <button data-value="max" class="${state.metric === 'max' ? 'active' : ''}">Peso</button>
+        <button data-value="reps" class="${state.metric === 'reps' ? 'active' : ''}">Ripetizioni</button>
         <button data-value="volume" class="${state.metric === 'volume' ? 'active' : ''}">Volume</button>
       </div>
       <div class="chart-box" id="ex-chart-box"><canvas id="chart-ex" aria-label="Grafico dei progressi dell'esercizio" role="img"></canvas></div>
       <div class="ex-stats" id="ex-stats"></div>
     </div>
-    <p class="footnote">Volume = serie × ripetizioni × peso. Contano solo le serie completate.</p>`;
+    <p class="footnote">Peso e ripetizioni si riferiscono alla serie più pesante di ogni allenamento. Volume = serie × ripetizioni × peso. Contano solo le serie completate.</p>`;
 }
 
 async function backupSection() {
@@ -431,7 +439,7 @@ function drawExercise() {
           suggestedMax: yMax,
           grid: { color: C.grid },
           border: { display: false },
-          ticks: { maxTicksLimit: 4, callback: (v) => (key === 'max' ? fmtNum(v) : fmtInt(v)) },
+          ticks: { maxTicksLimit: 4, precision: key === 'reps' ? 0 : undefined, callback: (v) => (key === 'max' ? fmtNum(v) : fmtInt(v)) },
         },
       },
       plugins: {
@@ -440,9 +448,9 @@ function drawExercise() {
             title: (items) => formatShortDate(points[items[0].dataIndex].date),
             label: (item) => {
               const p = points[item.dataIndex];
-              return key === 'max'
-                ? `${fmtNum(p.max)} kg`
-                : `${fmtInt(p.volume)} kg · ${p.sets} serie`;
+              if (key === 'max') return `${fmtNum(p.max)} kg × ${p.reps}`;
+              if (key === 'reps') return `${p.reps} ripetizioni · ${fmtNum(p.max)} kg`;
+              return `${fmtInt(p.volume)} kg · ${p.sets} serie`;
             },
           },
         },
