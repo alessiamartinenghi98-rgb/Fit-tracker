@@ -22,6 +22,7 @@ import { loadTimerSetting, isTimerEnabled, setTimerEnabled, startRest, stopRest 
 import {
   mountTreadmill, lastTreadmill, defaultTreadmill, treadmillToSave, treadmillText, hasTreadmill,
 } from './treadmill.js';
+import { afterWorkout } from './motivation.js';
 
 /** Riga "Tapis roulant · 25 min · 6 km/h" nelle card dello storico. */
 function treadmillLine(w) {
@@ -553,12 +554,15 @@ function entryFromTemplate(te, workout) {
     const ls = last ? (last.sets[i] || last.sets[last.sets.length - 1]) : null;
     return { weight: ls ? ls.weight : null, reps: null, done: false };
   });
-  return {
+  const entry = {
     exerciseId: te.exerciseId,
     name: te.name,
     target: { sets: te.sets, repMin: te.repMin, repMax: te.repMax, unit: te.unit || '' },
     sets,
   };
+  // Ricorda se c'era il suggerimento "Aumenta il peso" (per festeggiarlo se seguito)
+  if (shouldIncrease(entry, workout)) entry.increaseHint = true;
+  return entry;
 }
 
 /**
@@ -649,6 +653,7 @@ export function openActivitySheet(existing = null) {
     notifyChange();
     haptic(15);
     toast(existing ? 'Allenamento aggiornato' : 'Allenamento registrato');
+    afterWorkout(w);
   });
 
   $('[data-delete]', body)?.addEventListener('click', async () => {
@@ -693,6 +698,7 @@ export function openCardioSheet(t) {
     notifyChange();
     haptic(15);
     toast('Cardio registrato');
+    afterWorkout(w);
   });
 }
 
@@ -1022,6 +1028,7 @@ async function finishWorkout() {
   hideEditor();
   haptic(20);
   toast(w.partial ? `Allenamento parziale registrato (${partialText(w)})` : 'Allenamento registrato');
+  afterWorkout(w);
 }
 
 /* --- Eventi dell'editor (registrati una sola volta, con delega) ---------- */

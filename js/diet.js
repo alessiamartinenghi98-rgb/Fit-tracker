@@ -21,6 +21,7 @@ import {
   dayStatus, carbCount, categoryCounts, weekDates, isCheatMeal, categoryLabel, counterLabel,
   slotOptions, plannedOption, OTHER_OPTION,
 } from './plan.js';
+import { afterMeal } from './motivation.js';
 
 const state = {
   weekStart: startOfWeek(todayISO()), // lunedì della settimana mostrata
@@ -293,6 +294,7 @@ async function saveMeal(date, slotId, meal) {
     state.days.set(date, day);
   }
   notifyChange();
+  if (meal) afterMeal(date, meal);
 }
 
 /** "Come da piano": un tocco e il pasto è segnato con la categoria prevista. */
