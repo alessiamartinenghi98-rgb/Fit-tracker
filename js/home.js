@@ -21,6 +21,7 @@ import {
 } from './workouts.js';
 import { WATER_GOAL, WATER_STEP, setWater, liters } from './water.js';
 import { hasTreadmill } from './treadmill.js';
+import { dailyMessage, mondayRecap, dismissRecap, afterWater } from './motivation.js';
 import { dayStatus, SLOTS, mealLabel, isCheatMeal } from './plan.js';
 
 const WEEKLY_GOAL = 4;
@@ -39,6 +40,12 @@ export function initHome() {
     if (action === 'water-edit') return editWater(todayISO());
     if (action === 'cal-prev') return shiftMonth(-1);
     if (action === 'cal-next') return shiftMonth(1);
+    if (action === 'dismiss-recap') {
+      const card = t.closest('[data-recap]');
+      dismissRecap(card.dataset.recap);
+      card.animate([{ opacity: 1 }, { opacity: 0, transform: 'scale(0.97)' }], { duration: 220 }).finished.then(() => card.remove());
+      return;
+    }
     const water = t.closest('[data-water]');
     if (water) return changeWater(todayISO(), Number(water.dataset.water));
     const day = t.closest('[data-day]');
@@ -82,6 +89,7 @@ function dietStats(from, to) {
 
 export async function renderHome() {
   await load();
+  const [message, recap] = await Promise.all([dailyMessage(), mondayRecap()]);
   const today = todayISO();
   const weekFrom = startOfWeek(today);
   const weekTo = addDays(weekFrom, 6);
@@ -100,6 +108,16 @@ export async function renderHome() {
 
   $('#home-content').innerHTML = `
     <div class="card rings-card" id="rings-card">${ringsCardInner(dayProgress(today))}</div>
+
+    ${recap ? recapCard(recap) : ''}
+
+    <div class="card quote-card ${message.kind === 'restart' ? 'soft' : ''}">
+      <span class="quote-icon">${icon(message.kind === 'restart' ? 'heart' : 'sparkles')}</span>
+      <div class="quote-body">
+        <div class="quote-label">Frase del giorno</div>
+        <div class="quote-text">${esc(message.text)}</div>
+      </div>
+    </div>
 
     ${active ? activeBanner(active) : ''}
 
@@ -124,6 +142,19 @@ export async function renderHome() {
     <div class="card week-card">${weekCardInner(weekFrom, weekTo, active)}</div>
 
     <div class="card cal-card" id="cal-card">${calendarInner()}</div>`;
+}
+
+/** Riepilogo positivo della settimana appena finita (lunedì). */
+function recapCard(r) {
+  return `
+    <div class="card recap-card" data-recap="${r.weekFrom}">
+      <div class="card-head" style="margin-bottom:var(--s-3)">
+        <span class="sum-label">${icon('calendar-check')} La tua settimana</span>
+        <button class="icon-btn" data-action="dismiss-recap" aria-label="Chiudi riepilogo" style="width:30px;height:30px">${icon('x')}</button>
+      </div>
+      ${r.lines.length ? `<ul class="notes-list recap-list">${r.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
+      <div class="quote-text" style="margin-top:var(--s-3)">${esc(r.text)}</div>
+    </div>`;
 }
 
 function waterCardInner(ml) {
@@ -325,6 +356,7 @@ async function changeWater(date, delta) {
   data.water.set(date, ml);
   haptic(delta > 0 ? 10 : 5);
   refreshWater(date, before);
+  afterWater(date);
 }
 
 /**
@@ -372,6 +404,7 @@ function editWater(date) {
     data.water.set(date, ml);
     s.close();
     refreshWater(date, before);
+    afterWater(date);
   });
 }
 
@@ -390,6 +423,7 @@ function openDaySheet(date) {
       haptic(5);
       s.body.innerHTML = dayDetail(date);
       refreshWater(date, before);
+      afterWater(date);
       return;
     }
     if (e.target.closest('[data-open-diet]')) {
