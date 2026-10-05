@@ -73,6 +73,28 @@ export function byNewest(a, b) {
 
 export const isActive = (w) => w.status === 'active';
 export const isCardio = (w) => w.kind === 'cardio';
+export const isActivity = (w) => w.kind === 'activity';
+/** Cardio e allenamenti liberi: contano per il calendario, non per l'obiettivo dei 4. */
+export const isExtra = (w) => isCardio(w) || isActivity(w);
+/** Allenamento con i pesi terminato: conta per l'obiettivo settimanale. */
+export const isStrength = (w) => !isActive(w) && !isExtra(w) && (w.exercises || []).length > 0;
+
+/* Tipi di allenamento libero */
+export const ACTIVITY_TYPES = [
+  { id: 'corsa', label: 'Corsa', icon: 'activity' },
+  { id: 'nuoto', label: 'Nuoto', icon: 'waves' },
+  { id: 'camminata', label: 'Camminata', icon: 'footprints' },
+  { id: 'bici', label: 'Bici', icon: 'bike' },
+  { id: 'altro', label: 'Altro', icon: 'circle-plus' },
+];
+export const activityType = (id) => ACTIVITY_TYPES.find((a) => a.id === id) || ACTIVITY_TYPES[4];
+
+/** Breve descrizione per Home e calendario, es. "Corsa · 30 min". */
+export function workoutLabel(w) {
+  if (isActivity(w)) return `${activityType(w.activity).label}${w.duration ? ` · ${w.duration} min` : ''}`;
+  if (isCardio(w)) return w.name || 'Cardio';
+  return `${w.templateCode ? `${w.templateCode} · ` : ''}${w.name || 'Allenamento'}`;
+}
 
 /** Allenamento in corso (al massimo uno). */
 export function getActiveWorkout() {
@@ -179,7 +201,7 @@ export async function initWorkouts() {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'start') return openStartSheet();
     if (action === 'resume') return resumeActive();
-    if (action === 'free') return startFree();
+    if (action === 'free') return openActivitySheet();
     if (action === 'edit-templates') return openTemplatesManager();
     const tpl = e.target.closest('[data-template]');
     if (tpl) return startTemplate(tpl.dataset.template);
@@ -188,6 +210,7 @@ export async function initWorkouts() {
       const w = state.workouts.find((x) => x.id === card.dataset.workout);
       if (!w) return;
       if (isCardio(w)) return openCardioRecord(w);
+      if (isActivity(w)) return openActivitySheet(w);
       openEditor(structuredClone(w));
     }
   });
@@ -251,8 +274,13 @@ function renderList() {
   }
 
   html += `
-    <button class="btn btn-ghost btn-block free-btn" data-action="free">
-      ${icon('plus')} Allenamento libero
+    <button class="card card-tap tpl-cardio" data-action="free">
+      <span class="tpl-badge cardio">${icon('activity')}</span>
+      <span class="row-main">
+        <span class="row-title">Allenamento libero</span>
+        <span class="row-sub">Corsa, nuoto, camminata, bici o altro</span>
+      </span>
+      <span class="row-trail">${icon('plus')}</span>
     </button>`;
 
   // Storico
@@ -276,7 +304,7 @@ function renderList() {
         currentMonth = month;
         html += `<div class="month-label">${formatMonth(w.date)}</div>`;
       }
-      group += isCardio(w) ? cardioCard(w) : workoutCard(w);
+      group += isCardio(w) ? cardioCard(w) : isActivity(w) ? activityCard(w) : workoutCard(w);
     }
     flush();
   }
@@ -349,6 +377,20 @@ function cardioCard(w) {
     </article>`;
 }
 
+function activityCard(w) {
+  const type = activityType(w.activity);
+  return `
+    <article class="card card-tap workout-card cardio-card" data-workout="${w.id}">
+      <div class="wc-head" style="align-items:center">
+        <div class="wc-title" style="display:flex;align-items:center;gap:10px">
+          <span class="tpl-badge cardio small">${icon(type.icon)}</span>${esc(workoutLabel(w))}
+        </div>
+        <div class="wc-date">${esc(formatDay(w.date))}</div>
+      </div>
+      ${w.note ? `<div class="wc-ex"><span>${esc(w.note)}</span></div>` : ''}
+    </article>`;
+}
+
 /* ==========================================================================
    Avvio di un allenamento
    ========================================================================== */
@@ -391,7 +433,7 @@ export function openStartSheet() {
   s.body.addEventListener('click', (e) => {
     const row = e.target.closest('[data-template]');
     if (row) { s.close(); startTemplate(row.dataset.template); return; }
-    if (e.target.closest('[data-free]')) { s.close(); startFree(); }
+    if (e.target.closest('[data-free]')) { s.close(); openActivitySheet(); }
   });
 }
 
@@ -461,19 +503,101 @@ function entryFromTemplate(te, workout) {
   };
 }
 
-/** Allenamento libero: si parte vuoti e si scelgono gli esercizi. */
-async function startFree() {
-  if (await guardActive()) return;
-  haptic();
-  const now = Date.now();
-  const w = {
-    id: db.uid(), date: todayISO(), name: '', status: 'active', exercises: [],
-    createdAt: now, startedAt: now, updatedAt: now,
-  };
-  await db.put('workouts', w);
-  state.workouts.unshift(w);
-  state.workouts.sort(byNewest);
-  openEditor(structuredClone(w), { pickFirst: true });
+/**
+ * Allenamento libero: tipo (corsa, nuoto, camminata, bici, altro), durata e nota.
+ * Con un allenamento già registrato il foglio serve a modificarlo o eliminarlo.
+ */
+export function openActivitySheet(existing = null) {
+  const draft = existing
+    ? { activity: existing.activity, duration: existing.duration || 30, note: existing.note || '', date: existing.date }
+    : { activity: 'corsa', duration: 30, note: '', date: todayISO() };
+
+  const s = openSheet({
+    title: existing ? 'Allenamento libero' : 'Nuovo allenamento libero',
+    html: `
+      <div class="field">
+        <span class="field-label">Tipo</span>
+        <div class="chips" data-types>
+          ${ACTIVITY_TYPES.map((a) => `
+            <button class="chip ${a.id === draft.activity ? 'active' : ''}" data-type="${a.id}">${icon(a.icon)}${a.label}</button>`).join('')}
+        </div>
+      </div>
+      <div class="grid-2">
+        <label class="field">
+          <span class="field-label">Durata (minuti)</span>
+          <div class="stepper" data-duration style="height:48px">
+            <button data-d="-5" aria-label="Meno 5 minuti">${icon('minus')}</button>
+            <input type="text" inputmode="numeric" value="${draft.duration}" autocomplete="off">
+            <button data-d="5" aria-label="Più 5 minuti">${icon('plus')}</button>
+          </div>
+        </label>
+        <label class="field">
+          <span class="field-label">Data</span>
+          <input class="input" type="date" data-date value="${draft.date}" max="${todayISO()}">
+        </label>
+      </div>
+      <label class="field">
+        <span class="field-label">Nota <span class="opt">· facoltativa</span></span>
+        <textarea class="input" data-note rows="2" maxlength="200" placeholder="Es. 5 km al parco, ritmo tranquillo">${esc(draft.note)}</textarea>
+      </label>
+      <p class="footnote" style="margin-top:0">Conta per il calendario della Home, non per l'obiettivo dei 4 allenamenti settimanali.</p>
+      <div class="sheet-actions">
+        <button class="btn btn-primary btn-block" data-save>${icon('check')} ${existing ? 'Salva modifiche' : 'Registra allenamento'}</button>
+        ${existing ? `<button class="btn btn-danger btn-block" data-delete>${icon('trash-2')} Elimina</button>` : ''}
+      </div>`,
+  });
+
+  const body = s.body;
+  const durInput = $('[data-duration] input', body);
+
+  $('[data-types]', body).addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-type]');
+    if (!chip) return;
+    draft.activity = chip.dataset.type;
+    body.querySelectorAll('[data-type]').forEach((c) => c.classList.toggle('active', c === chip));
+    haptic(5);
+  });
+  $('[data-duration]', body).addEventListener('click', (e) => {
+    const b = e.target.closest('[data-d]');
+    if (!b) return;
+    e.preventDefault();
+    draft.duration = Math.max(5, Math.min(600, (parseInt(durInput.value, 10) || 0) + Number(b.dataset.d)));
+    durInput.value = draft.duration;
+    haptic(5);
+  });
+
+  $('[data-save]', body).addEventListener('click', async () => {
+    const duration = parseInt(durInput.value, 10);
+    if (!duration || duration < 1) return toast('Inserisci la durata', { error: true });
+    const now = Date.now();
+    const w = existing || { id: db.uid(), kind: 'activity', status: 'done', exercises: [], createdAt: now };
+    Object.assign(w, {
+      activity: draft.activity,
+      name: activityType(draft.activity).label,
+      duration: Math.min(600, duration),
+      note: $('[data-note]', body).value.trim(),
+      date: $('[data-date]', body).value || todayISO(),
+      updatedAt: now,
+      finishedAt: w.finishedAt || now,
+    });
+    await db.put('workouts', w);
+    if (!existing) state.workouts.unshift(w);
+    state.workouts.sort(byNewest);
+    s.close();
+    renderList();
+    notifyChange();
+    haptic(15);
+    toast(existing ? 'Allenamento aggiornato' : 'Allenamento registrato');
+  });
+
+  $('[data-delete]', body)?.addEventListener('click', async () => {
+    await db.del('workouts', existing.id);
+    state.workouts = state.workouts.filter((x) => x.id !== existing.id);
+    s.close();
+    renderList();
+    notifyChange();
+    toast('Allenamento eliminato');
+  });
 }
 
 /* --- Cardio: basta segnarlo come fatto ---------------------------------- */

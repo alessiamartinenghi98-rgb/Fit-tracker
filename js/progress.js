@@ -84,9 +84,9 @@ function applyChartDefaults() {
 
 async function load() {
   const [workouts, exercises] = await Promise.all([db.getAll('workouts'), db.getAll('exercises')]);
-  // Contano solo gli allenamenti terminati con almeno un esercizio (il cardio è escluso)
+  // Contano solo gli allenamenti con i pesi terminati (cardio e allenamenti liberi esclusi)
   state.workouts = workouts
-    .filter((w) => w.status !== 'active' && w.kind !== 'cardio' && (w.exercises || []).length > 0)
+    .filter((w) => w.status !== 'active' && w.kind !== 'cardio' && w.kind !== 'activity' && (w.exercises || []).length > 0)
     .sort(byNewest);
   state.exercises = exercises;
 }
