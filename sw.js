@@ -10,7 +10,7 @@
    l'aggiornamento su tutti i dispositivi.
    ========================================================================== */
 
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = `fit-tracker-${CACHE_VERSION}`;
 
 // Percorsi relativi: funzionano anche nella sottocartella di GitHub Pages

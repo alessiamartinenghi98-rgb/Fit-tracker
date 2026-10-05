@@ -33,6 +33,36 @@ export const SLOTS = [
 
 export const WEEKDAYS = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
 
+/* --- Opzioni di colazione e spuntino --------------------------------------
+   "Altro" è sempre disponibile in fondo alla lista e non si può togliere. */
+
+export const OTHER_OPTION = { id: 'altro', label: 'Altro' };
+
+const DEFAULT_OPTIONS = {
+  colazione: [
+    { id: 'caffe-bresaola', label: 'Caffè + 2 gallette + bresaola' },
+    { id: 'caffe-uova', label: 'Caffè + 2 gallette + uova' },
+    { id: 'yogurt-greco', label: 'Yogurt greco + eritritolo + frutti rossi' },
+    { id: 'ricotta', label: 'Ricotta + 2 gallette + frutti rossi' },
+  ],
+  spuntino: [
+    { id: 'yogurt-verdura', label: 'Yogurt bianco + verdura (carote o finocchi)' },
+    { id: 'frutta-verdura', label: '100 g frutta + verdura (carote o finocchi)' },
+    { id: 'verdura', label: 'Solo verdura (finocchi e carote)' },
+  ],
+};
+
+/* Opzione prevista dal piano per ogni giorno (lunedì → domenica) */
+const DEFAULT_DAY_OPTIONS = [
+  { colazione: 'caffe-bresaola', spuntino: 'yogurt-verdura' },
+  { colazione: 'yogurt-greco', spuntino: 'frutta-verdura' },
+  { colazione: 'yogurt-greco', spuntino: 'frutta-verdura' },
+  { colazione: 'caffe-bresaola', spuntino: 'yogurt-verdura' },
+  { colazione: 'ricotta', spuntino: 'verdura' },
+  { colazione: 'ricotta', spuntino: 'frutta-verdura' },
+  { colazione: 'caffe-uova', spuntino: 'yogurt-verdura' },
+];
+
 /* --- Piano preimpostato -------------------------------------------------- */
 
 const main = (category, carbo, text) => ({ category, carbo, text });
@@ -83,6 +113,7 @@ export const DEFAULT_PLAN = {
       cena: main('pesce', true, 'Pesce + verdura + carbo (es. pasta con salmone e zucchine)'),
     },
   ],
+  options: DEFAULT_OPTIONS,
   targets: { carne: 3, uova: 3, pesce: 3, legumi: 2, latticino: 2, libero: 1 },
   carbPortions: [
     'Pane 50 g',
@@ -103,6 +134,9 @@ export const DEFAULT_PLAN = {
   ].join('\n'),
 };
 
+// Ogni giorno del piano preimpostato ha l'opzione prevista per colazione e spuntino
+DEFAULT_PLAN.days.forEach((d, i) => { d.options = { ...DEFAULT_DAY_OPTIONS[i] }; });
+
 /* --- Lettura e salvataggio del piano ------------------------------------- */
 
 let plan = structuredClone(DEFAULT_PLAN);
@@ -111,6 +145,14 @@ export async function loadPlan() {
   const saved = await db.getMeta('dietPlan');
   plan = saved && Array.isArray(saved.days) && saved.days.length === 7 ? saved : structuredClone(DEFAULT_PLAN);
   plan.targets = { ...DEFAULT_PLAN.targets, ...(plan.targets || {}) };
+  // Piani salvati prima delle opzioni di colazione e spuntino: si completano da soli
+  if (!plan.options) plan.options = structuredClone(DEFAULT_OPTIONS);
+  for (const slot of ['colazione', 'spuntino']) {
+    if (!Array.isArray(plan.options[slot])) plan.options[slot] = structuredClone(DEFAULT_OPTIONS[slot]);
+  }
+  plan.days.forEach((d, i) => {
+    if (!d.options) d.options = { ...DEFAULT_DAY_OPTIONS[i] };
+  });
   return plan;
 }
 
@@ -127,6 +169,25 @@ export function weekdayIndex(iso) {
 }
 
 export const planForDate = (iso) => plan.days[weekdayIndex(iso)];
+
+/** Opzioni di colazione o spuntino, con "Altro" in fondo. */
+export function slotOptions(slotId) {
+  return [...(plan.options?.[slotId] || []), OTHER_OPTION];
+}
+
+/** Opzione prevista dal piano per quel giorno (se esiste ancora). */
+export function plannedOption(iso, slotId) {
+  const id = planForDate(iso).options?.[slotId];
+  return slotOptions(slotId).find((o) => o.id === id) || null;
+}
+
+/** Testo breve di un pasto segnato, es. "Uova + carbo" o "Ricotta + 2 gallette…". */
+export function mealLabel(meal) {
+  if (!meal) return '';
+  if (meal.category) return `${categoryLabel(meal.category)}${meal.carbo ? ' + carbo' : ''}`;
+  if (meal.option) return meal.optionLabel || OTHER_OPTION.label;
+  return 'Come da piano';
+}
 
 /* --- Calcoli ------------------------------------------------------------- */
 
