@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover: il contenuto arriva fino ai bordi (notch incluso);
+       user-scalable=no: niente zoom accidentale in modalità app -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Fit Tracker</title>
+  <meta name="description" content="Diario personale di allenamenti e dieta.">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <!-- iOS: app a schermo intero, barra di stato integrata, icona della Home -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Fit Tracker">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Librerie da CDN (versioni fissate: il service worker le salva per l'uso offline) -->
+  <script src="https://cdn.jsdelivr.net/npm/lucide@1.52.0/dist/umd/lucide.min.js" crossorigin="anonymous" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" crossorigin="anonymous" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ===================== SCHEDA ALLENAMENTI ===================== -->
+    <section class="view active" id="view-workouts" data-title="Allenamenti">
+      <header class="topbar">
+        <span class="topbar-title">Allenamenti</span>
+        <div class="topbar-actions">
+          <button class="icon-btn" id="btn-library" aria-label="Libreria esercizi">
+            <i data-lucide="library-big"></i>
+          </button>
+        </div>
+      </header>
+      <h1 class="large-title">Allenamenti</h1>
+      <div id="workouts-content"></div>
+    </section>
+
+    <!-- ========================= SCHEDA DIETA ======================== -->
+    <section class="view" id="view-diet" data-title="Dieta">
+      <header class="topbar">
+        <span class="topbar-title">Dieta</span>
+        <div class="topbar-actions">
+          <button class="icon-btn" id="btn-diet-history" aria-label="Storico pasti">
+            <i data-lucide="calendar-days"></i>
+          </button>
+        </div>
+      </header>
+      <h1 class="large-title">Dieta</h1>
+      <div id="diet-content"></div>
+    </section>
+
+    <!-- ======================= SCHEDA PROGRESSI ====================== -->
+    <section class="view" id="view-progress" data-title="Progressi">
+      <header class="topbar">
+        <span class="topbar-title">Progressi</span>
+      </header>
+      <h1 class="large-title">Progressi</h1>
+      <div id="progress-content"></div>
+    </section>
+
+    <!-- Editor dell'allenamento (vista a schermo intero, entra da destra) -->
+    <section class="editor" id="workout-editor" aria-hidden="true"></section>
+  </div>
+
+  <!-- Barra delle schede -->
+  <nav class="tabbar" id="tabbar" aria-label="Navigazione principale">
+    <button class="tab active" data-view="workouts">
+      <i data-lucide="dumbbell"></i><span>Allenamenti</span>
+    </button>
+    <button class="tab" data-view="diet">
+      <i data-lucide="utensils"></i><span>Dieta</span>
+    </button>
+    <button class="tab" data-view="progress">
+      <i data-lucide="chart-line"></i><span>Progressi</span>
+    </button>
+  </nav>
+
+  <!-- Toast di conferma (testo inserito via JavaScript) -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Input file nascosto per importare il backup -->
+  <input type="file" id="import-file" accept="application/json,.json" hidden>
+</body>
+</html>

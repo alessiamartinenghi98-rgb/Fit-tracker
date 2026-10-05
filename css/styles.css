@@ -1,0 +1,1701 @@
+/* ==========================================================================
+   Fit Tracker — Foglio di stile
+   --------------------------------------------------------------------------
+   Organizzazione:
+   1. Token di design (colori, spaziature, raggi, tipografia)
+   2. Reset e comportamento "app nativa"
+   3. Struttura: viste, header, barra delle schede
+   4. Componenti: pulsanti, card, liste, input, stepper, segmented control
+   5. Allenamenti (editor, serie)
+   6. Dieta
+   7. Progressi
+   8. Bottom sheet, toast, stati vuoti
+   9. Animazioni
+   ========================================================================== */
+
+/* 1. TOKEN DI DESIGN ------------------------------------------------------ */
+:root {
+  /* Superfici */
+  --bg: #000000;
+  --surface: #141416;
+  --surface-2: #1e1e21;
+  --surface-3: #2a2a2e;
+  --separator: rgba(255, 255, 255, 0.08);
+  --separator-strong: rgba(255, 255, 255, 0.14);
+
+  /* Testo */
+  --text: #f5f5f7;
+  --text-2: #a1a1a8;   /* secondario: contrasto ~8:1 sul nero */
+  --text-3: #6e6e75;   /* terziario: solo per dettagli non essenziali */
+
+  /* Accento unico: verde lime */
+  --accent: #c6f432;
+  --accent-press: #b2dc2b;
+  --accent-soft: rgba(198, 244, 50, 0.14);
+  --accent-ink: #0b0d02; /* testo sopra il lime */
+
+  /* Azioni distruttive */
+  --danger: #ff453a;
+  --danger-soft: rgba(255, 69, 58, 0.14);
+
+  /* Spaziature (griglia da 8px) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 40px;
+  --s-8: 48px;
+
+  /* Raggi */
+  --r-sm: 10px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* Ombre leggere (sul nero si percepiscono come profondità) */
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-sheet: 0 -12px 40px rgba(0, 0, 0, 0.6);
+
+  /* Tipografia */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-rounded: ui-rounded, -apple-system, "SF Pro Rounded", system-ui, sans-serif;
+
+  /* Safe area dell'iPhone */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Misure di layout */
+  --tabbar-h: 56px;
+  --gutter: 16px;
+
+  /* Curve di animazione */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  color-scheme: dark;
+}
+
+/* 2. RESET E COMPORTAMENTO "APP NATIVA" ----------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Niente "rimbalzo" della pagina intera: scorrono solo le viste */
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* Niente evidenziazione grigia al tocco */
+  -webkit-tap-highlight-color: transparent;
+  /* Niente zoom con doppio tocco */
+  touch-action: manipulation;
+}
+
+/* Niente selezione del testo né menu contestuale su elementi interattivi */
+button,
+.tab,
+.card-tap,
+.list-row,
+.chip,
+.seg button,
+.sheet-handle-area {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  /* 17px: sopra i 16px iOS non fa zoom automatico sul campo */
+  font-size: 17px;
+}
+
+/* Icone Lucide: dimensione e tratto coerenti */
+svg.lucide {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+  flex-shrink: 0;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* 3. STRUTTURA ------------------------------------------------------------ */
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* Ogni scheda è una vista a tutto schermo con il proprio scroll */
+.view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 0 calc(var(--gutter) + var(--safe-right))
+    calc(var(--tabbar-h) + var(--safe-bottom) + var(--s-6))
+    calc(var(--gutter) + var(--safe-left));
+  visibility: hidden;
+  opacity: 0;
+}
+
+.view.active {
+  visibility: visible;
+  opacity: 1;
+  animation: view-in 280ms var(--ease-out);
+}
+
+/* Header compatto che appare (con sfocatura) quando si scorre */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 calc(-1 * (var(--gutter) + var(--safe-right))) 0 calc(-1 * (var(--gutter) + var(--safe-left)));
+  padding: var(--safe-top) calc(var(--gutter) + var(--safe-right)) 0 calc(var(--gutter) + var(--safe-left));
+  height: calc(44px + var(--safe-top));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  background: transparent;
+  transition: background 200ms ease, border-color 200ms ease;
+  border-bottom: 0.5px solid transparent;
+}
+
+.topbar.scrolled {
+  background: rgba(0, 0, 0, 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom-color: var(--separator);
+}
+
+.topbar-title {
+  position: absolute;
+  left: 50%;
+  bottom: 11px;
+  transform: translateX(-50%) translateY(4px);
+  font-size: 17px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.topbar.scrolled .topbar-title {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-left: auto;
+}
+
+/* Titolo grande, in stile iOS */
+.large-title {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: var(--s-1) 0 var(--s-5);
+}
+
+.large-title small {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-2);
+  margin-top: var(--s-1);
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin: var(--s-6) 0 var(--s-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-label:first-child {
+  margin-top: 0;
+}
+
+/* Barra delle schede in basso, con effetto vetro */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  height: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  background: rgba(10, 10, 12, 0.78);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-top: 0.5px solid var(--separator-strong);
+  transition: transform 320ms var(--ease-out);
+}
+
+.tabbar.hidden {
+  transform: translateY(100%);
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: color 180ms ease;
+}
+
+.tab svg.lucide {
+  width: 24px;
+  height: 24px;
+  transition: transform 260ms var(--ease-spring);
+}
+
+.tab.active {
+  color: var(--accent);
+}
+
+.tab:active svg.lucide {
+  transform: scale(0.86);
+}
+
+/* 4. COMPONENTI ----------------------------------------------------------- */
+
+/* Pulsante principale (unico uso "pieno" dell'accento) */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 50px;
+  padding: 0 var(--s-5);
+  border-radius: var(--r-md);
+  font-size: 17px;
+  font-weight: 600;
+  transition: transform 140ms var(--ease-out), background 140ms ease, opacity 140ms ease;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-primary:active {
+  background: var(--accent-press);
+}
+
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.btn-ghost {
+  color: var(--accent);
+  height: 44px;
+  padding: 0 var(--s-3);
+}
+
+.btn-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Pulsante tondo con sola icona (header) */
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text);
+  transition: transform 140ms var(--ease-out), background 140ms ease;
+}
+
+.icon-btn:active {
+  transform: scale(0.9);
+  background: var(--surface-3);
+}
+
+.icon-btn.accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Card */
+.card {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+  border: 0.5px solid var(--separator);
+  padding: var(--s-4);
+}
+
+.card + .card {
+  margin-top: var(--s-3);
+}
+
+.card-tap {
+  transition: transform 160ms var(--ease-out), background 160ms ease;
+  cursor: pointer;
+}
+
+.card-tap:active {
+  transform: scale(0.985);
+  background: #19191c;
+}
+
+/* Liste raggruppate (stile impostazioni iOS) */
+.list {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  border: 0.5px solid var(--separator);
+  overflow: hidden;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 52px;
+  padding: var(--s-3) var(--s-4);
+  position: relative;
+  width: 100%;
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.list-row + .list-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--s-4);
+  right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+
+button.list-row:active {
+  background: var(--surface-2);
+}
+
+.list-row .row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-row .row-title {
+  display: block;
+  font-size: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-row .row-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.list-row .row-trail {
+  color: var(--text-2);
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.row-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.row-icon svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+
+.row-icon.accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.row-icon.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Campi di testo */
+.field {
+  display: block;
+  margin-bottom: var(--s-4);
+}
+
+.field-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: var(--s-2);
+}
+
+.field-label .opt {
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.input {
+  width: 100%;
+  height: 48px;
+  padding: 0 var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  outline: none;
+  transition: border-color 140ms ease, background 140ms ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:focus {
+  border-color: rgba(198, 244, 50, 0.55);
+  background: #232327;
+}
+
+textarea.input {
+  height: auto;
+  min-height: 88px;
+  padding: var(--s-3) var(--s-4);
+  resize: none;
+  line-height: 1.4;
+}
+
+input[type="date"].input {
+  display: flex;
+  align-items: center;
+}
+
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+}
+
+/* Griglia per i macronutrienti */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.input-unit {
+  position: relative;
+}
+
+.input-unit .input {
+  padding-right: 48px;
+}
+
+.input-unit .unit {
+  position: absolute;
+  right: var(--s-4);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-size: 15px;
+  pointer-events: none;
+}
+
+/* Segmented control */
+.seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 3px;
+  position: relative;
+  isolation: isolate;
+}
+
+.seg button {
+  height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+  border-radius: 8px;
+  transition: color 180ms ease;
+  z-index: 1;
+}
+
+.seg button.active {
+  color: var(--text);
+}
+
+/* Indicatore che scorre sotto il segmento attivo */
+.seg-indicator {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: transform 260ms var(--ease-out), width 260ms var(--ease-out);
+  z-index: 0;
+}
+
+/* Chip (selezione del tipo di pasto) */
+.chips {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.chip {
+  height: 36px;
+  padding: 0 var(--s-4);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 15px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  transition: all 160ms ease;
+}
+
+.chip svg.lucide {
+  width: 16px;
+  height: 16px;
+}
+
+.chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(198, 244, 50, 0.35);
+}
+
+/* Stepper +/- per peso e ripetizioni */
+.stepper {
+  container-type: inline-size; /* permette di adattare il font alla larghezza */
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  height: 44px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.stepper button {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.stepper button:active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.stepper button svg.lucide {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.5;
+}
+
+.stepper input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  text-align: center;
+  font-size: 20px;
+  /* Il numero si rimpicciolisce quanto basta per far stare "102,5" */
+  font-size: clamp(15px, calc((100cqw - 60px) / 2.9), 22px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  padding: 0;
+}
+
+.stepper input:focus {
+  background: rgba(198, 244, 50, 0.08);
+}
+
+/* 5. ALLENAMENTI ---------------------------------------------------------- */
+
+/* Card riepilogo di un allenamento nello storico */
+.workout-card .wc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.workout-card .wc-title {
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workout-card .wc-date {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.workout-card .wc-stats {
+  display: flex;
+  gap: var(--s-5);
+  margin-top: var(--s-3);
+}
+
+.stat-mini .v {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.stat-mini .v small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  margin-left: 2px;
+}
+
+.stat-mini .l {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.workout-card .wc-ex {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 0.5px solid var(--separator);
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.workout-card .wc-ex span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Editor allenamento: vista a schermo intero che entra da destra */
+.editor {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 calc(var(--gutter) + var(--safe-right)) calc(var(--safe-bottom) + var(--s-8))
+    calc(var(--gutter) + var(--safe-left));
+  transform: translateX(100%);
+  transition: transform 380ms var(--ease-out);
+  visibility: hidden;
+}
+
+.editor.open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.editor.closing {
+  visibility: visible;
+}
+
+.editor .topbar {
+  background: rgba(0, 0, 0, 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+  font-size: 17px;
+  height: 44px;
+  margin-left: -8px;
+  padding-right: var(--s-2);
+}
+
+.back-btn svg.lucide {
+  width: 26px;
+  height: 26px;
+}
+
+.save-state {
+  font-size: 13px;
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 200ms ease;
+}
+
+.save-state svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.title-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: var(--s-2);
+  padding: 0;
+}
+
+.title-input::placeholder {
+  color: var(--text-3);
+}
+
+.editor-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-3) 0 var(--s-5);
+}
+
+.date-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.date-pill svg.lucide {
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+/* L'input data nativo è invisibile ma copre la pillola: il tocco apre il picker iOS */
+.date-pill input[type="date"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.editor-summary {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+/* Card esercizio dentro l'editor */
+.ex-card {
+  padding: var(--s-4) var(--s-3) var(--s-2);
+  animation: card-in 320ms var(--ease-out);
+}
+
+.ex-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: 0 var(--s-1);
+}
+
+.ex-name {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.ex-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.ex-ref svg.lucide {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.ex-ref b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ex-menu {
+  width: 32px;
+  height: 32px;
+  margin: -4px -4px 0 0;
+  border-radius: var(--r-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+}
+
+.ex-menu:active {
+  background: var(--surface-2);
+}
+
+/* Intestazione colonne delle serie */
+.sets-head,
+.set-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr) 42px;
+  gap: 6px;
+  align-items: center;
+}
+
+.sets-head {
+  margin: var(--s-4) 0 var(--s-2);
+  padding: 0 var(--s-1);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  text-transform: uppercase;
+  text-align: center;
+}
+
+/* Contenitore della riga: permette lo swipe per eliminare */
+.set-wrap {
+  position: relative;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.set-delete {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: var(--s-5);
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+  gap: 6px;
+  opacity: 0; /* visibile solo durante lo swipe */
+}
+
+.set-wrap.swiping .set-delete {
+  opacity: 1;
+}
+
+.set-row {
+  position: relative;
+  padding: 4px;
+  background: var(--surface);
+  border-radius: var(--r-md);
+  transition: background 260ms ease, transform 260ms var(--ease-out);
+  touch-action: pan-y;
+}
+
+.set-row.dragging {
+  transition: none;
+}
+
+.set-num {
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+/* Serie non ancora completata: valori più tenui */
+.set-row:not(.done) .stepper input {
+  color: var(--text-2);
+}
+
+.set-check {
+  width: 42px;
+  height: 44px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-3);
+  transition: background 200ms ease, color 200ms ease, transform 140ms var(--ease-out);
+}
+
+.set-check:active {
+  transform: scale(0.88);
+}
+
+.set-check svg.lucide {
+  width: 22px;
+  height: 22px;
+  stroke-width: 3;
+}
+
+/* Serie completata: riga leggermente tinta di lime e spunta piena */
+.set-row.done {
+  background: #202418; /* lime al 7% sopra la superficie, opaco */
+}
+
+.set-row.done .set-num {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.set-row.done .set-check {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.set-row.done .stepper {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Animazione di conferma quando si salva una serie */
+.set-row.just-done {
+  animation: set-flash 600ms var(--ease-out);
+}
+
+.set-row.just-done .set-check svg.lucide {
+  animation: check-pop 420ms var(--ease-spring);
+}
+
+.add-set {
+  width: 100%;
+  height: 44px;
+  margin-top: 2px;
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  transition: background 120ms ease;
+}
+
+.add-set:active {
+  background: var(--surface-2);
+}
+
+.add-set svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+
+.hint {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-top: var(--s-4);
+}
+
+/* 6. DIETA ---------------------------------------------------------------- */
+.day-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+}
+
+.day-nav .date-pill {
+  flex: 1;
+  justify-content: center;
+  height: 40px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.day-nav .icon-btn {
+  width: 40px;
+  height: 40px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Riepilogo calorie e macro del giorno */
+.kcal-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.kcal-hero .big {
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.kcal-hero .unit {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.kcal-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: var(--s-1);
+}
+
+/* Barra impilata: quota di calorie da proteine / carboidrati / grassi */
+.macro-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-2);
+  margin: var(--s-4) 0;
+}
+
+.macro-bar span {
+  display: block;
+  height: 100%;
+  transition: flex-grow 500ms var(--ease-out);
+}
+
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-3);
+}
+
+.macro .lbl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.macro .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.macro .val {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2px;
+}
+
+.macro .val small {
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 500;
+  margin-left: 1px;
+}
+
+/* Tre tonalità dello stesso lime: un solo accento, macro distinguibili */
+.m-p { background: var(--accent); }
+.m-c { background: rgba(198, 244, 50, 0.55); }
+.m-f { background: rgba(198, 244, 50, 0.28); }
+
+.meal-section {
+  margin-top: var(--s-5);
+}
+
+.meal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-2);
+}
+
+.meal-head h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.meal-head h3 svg.lucide {
+  color: var(--text-2);
+}
+
+.meal-head .meal-kcal {
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.meal-item .row-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.meal-add {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 48px;
+  padding: 0 var(--s-4);
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.list .meal-add {
+  border-top: 0.5px solid var(--separator);
+}
+
+.meal-add:active {
+  background: var(--surface-2);
+}
+
+.meal-add svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+
+.meal-empty {
+  border: 1px dashed var(--separator-strong);
+  border-radius: var(--r-lg);
+}
+
+/* 7. PROGRESSI ------------------------------------------------------------ */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.kpi {
+  padding: var(--s-4);
+}
+
+.kpi + .kpi {
+  margin-top: 0;
+}
+
+.kpi .kpi-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.kpi .kpi-value {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  margin-top: var(--s-2);
+}
+
+.kpi .kpi-delta {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: var(--s-1);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kpi .kpi-delta svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.kpi .kpi-delta.up {
+  color: var(--accent);
+}
+
+.chart-card .chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+
+.chart-card .chart-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.chart-box {
+  position: relative;
+  height: 200px;
+}
+
+.chart-box canvas {
+  display: block;
+}
+
+.exercise-select {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  height: 48px;
+  padding: 0 var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: var(--s-3);
+}
+
+.exercise-select span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.exercise-select svg.lucide {
+  color: var(--text-2);
+}
+
+.ex-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 0.5px solid var(--separator);
+}
+
+.ex-stats .stat-mini .v {
+  font-size: 18px;
+}
+
+.chart-empty {
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  color: var(--text-3);
+  font-size: 14px;
+  text-align: center;
+  padding: 0 var(--s-5);
+}
+
+.chart-empty svg.lucide {
+  width: 28px;
+  height: 28px;
+}
+
+.footnote {
+  font-size: 13px;
+  color: var(--text-3);
+  margin-top: var(--s-3);
+  line-height: 1.45;
+  padding: 0 var(--s-1);
+}
+
+/* 8. BOTTOM SHEET, TOAST, STATI VUOTI ------------------------------------- */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.backdrop.open {
+  opacity: 1;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  max-height: calc(100dvh - var(--safe-top) - 24px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  border-top: 0.5px solid var(--separator-strong);
+  box-shadow: var(--shadow-sheet);
+  transform: translateY(100%);
+  transition: transform 380ms var(--ease-out);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+.sheet.open {
+  transform: translateY(0);
+}
+
+.sheet.dragging {
+  transition: none;
+}
+
+.sheet.tall {
+  height: calc(100dvh - var(--safe-top) - 24px);
+}
+
+.sheet-handle-area {
+  flex-shrink: 0;
+  padding: var(--s-2) var(--s-4) 0;
+  touch-action: none;
+}
+
+.sheet-handle {
+  width: 36px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  margin: 0 auto var(--s-2);
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  min-height: 44px;
+}
+
+.sheet-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--s-3) var(--s-4) calc(var(--safe-bottom) + var(--s-5));
+}
+
+.sheet-actions {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
+}
+
+.confirm-text {
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+/* Ricerca nella libreria esercizi */
+.search {
+  position: relative;
+  margin-bottom: var(--s-3);
+}
+
+.search svg.lucide {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  width: 18px;
+  height: 18px;
+}
+
+.search .input {
+  padding-left: 40px;
+  height: 44px;
+}
+
+/* Toast di conferma */
+.toast {
+  position: fixed;
+  left: 50%;
+  top: calc(var(--safe-top) + var(--s-2));
+  z-index: 120;
+  transform: translate(-50%, -140%);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: calc(100% - 32px);
+  padding: 10px var(--s-4) 10px var(--s-3);
+  border-radius: var(--r-pill);
+  background: rgba(40, 40, 44, 0.92);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 420ms var(--ease-spring);
+  pointer-events: none;
+}
+
+.toast.show {
+  transform: translate(-50%, 0);
+}
+
+.toast svg.lucide {
+  color: var(--accent);
+  width: 20px;
+  height: 20px;
+}
+
+.toast.error svg.lucide {
+  color: var(--danger);
+}
+
+/* Stati vuoti */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--s-7) var(--s-4);
+}
+
+.empty-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 0.5px solid var(--separator-strong);
+  color: var(--accent);
+  margin-bottom: var(--s-5);
+  box-shadow: 0 0 0 8px rgba(198, 244, 50, 0.04);
+}
+
+.empty-icon svg.lucide {
+  width: 32px;
+  height: 32px;
+}
+
+.empty h2 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.empty p {
+  font-size: 15px;
+  color: var(--text-2);
+  margin: var(--s-2) 0 var(--s-5);
+  max-width: 280px;
+  line-height: 1.45;
+}
+
+.empty.compact {
+  padding: var(--s-5) var(--s-4);
+}
+
+.empty.compact .empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  margin-bottom: var(--s-4);
+}
+
+.empty.compact .empty-icon svg.lucide {
+  width: 26px;
+  height: 26px;
+}
+
+.empty.compact h2 {
+  font-size: 17px;
+}
+
+.empty.compact p {
+  font-size: 14px;
+  margin-bottom: var(--s-4);
+}
+
+/* Separatore di mese nello storico */
+.month-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin: var(--s-5) 0 var(--s-3);
+}
+
+/* Pulsante principale fisso in cima alla scheda Allenamenti */
+.hero-cta {
+  margin-bottom: var(--s-2);
+}
+
+/* 9. ANIMAZIONI ----------------------------------------------------------- */
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes set-flash {
+  0% { background: #4d5c1f; }
+  100% { background: #202418; }
+}
+
+@keyframes check-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+@keyframes row-out {
+  to { opacity: 0; transform: translateX(-100%); }
+}
+
+.fade-list > * {
+  animation: card-in 360ms var(--ease-out) both;
+}
+
+.fade-list > *:nth-child(2) { animation-delay: 30ms; }
+.fade-list > *:nth-child(3) { animation-delay: 60ms; }
+.fade-list > *:nth-child(4) { animation-delay: 90ms; }
+.fade-list > *:nth-child(5) { animation-delay: 120ms; }
+.fade-list > *:nth-child(n + 6) { animation-delay: 150ms; }
+
+/* Rispetta l'impostazione "Riduci movimento" del telefono */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}
