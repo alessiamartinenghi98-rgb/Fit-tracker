@@ -3749,3 +3749,32 @@ input[type="date"]::-webkit-date-and-time-value {
   10% { opacity: 0.95; }
   100% { transform: translate(var(--x), 70vh) rotate(var(--r)); opacity: 0; }
 }
+
+/* Dettaglio del giorno: acqua modificabile */
+.day-water .water-amount {
+  display: flex;
+  flex-direction: column;
+}
+
+.day-water .btn {
+  height: 44px;
+  padding: 0 var(--s-3);
+  font-size: 15px;
+}
+
+.day-water .btn svg.lucide {
+  width: 16px;
+  height: 16px;
+}
+
+#recap-wrap:empty {
+  display: none;
+}
+
+#recap-wrap .recap-card {
+  margin-top: var(--s-3);
+}
+
+#recap-wrap + .card {
+  margin-top: var(--s-3);
+}
