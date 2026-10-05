@@ -34,6 +34,12 @@
   --accent-soft: rgba(198, 244, 50, 0.14);
   --accent-ink: #0b0d02; /* testo sopra il lime */
 
+  /* Colori dei puntini del calendario (usati solo per acqua e dieta) */
+  --water: #4aa8ff;
+  --water-soft: rgba(74, 168, 255, 0.16);
+  --diet: #ff9f0a;
+  --diet-soft: rgba(255, 159, 10, 0.16);
+
   /* Azioni distruttive */
   --danger: #ff453a;
   --danger-soft: rgba(255, 69, 58, 0.14);
@@ -2314,6 +2320,830 @@ input[type="date"]::-webkit-date-and-time-value {
 .hero-note b {
   color: var(--text);
   font-weight: 600;
+}
+
+/* 11. HOME: RIEPILOGO, ACQUA, SETTIMANA, CALENDARIO ---------------------- */
+
+.card + .card { margin-top: var(--s-3); }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+}
+
+.sum-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.sum-label svg.lucide {
+  width: 16px;
+  height: 16px;
+}
+
+.sum-big {
+  display: block;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin-top: var(--s-2);
+}
+
+.sum-big span {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+.sum-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: var(--s-2);
+}
+
+.sum-sub b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.summary-card {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  gap: var(--s-4);
+}
+
+.sum-col {
+  min-width: 0;
+}
+
+.sum-sep {
+  background: var(--separator);
+}
+
+.sum-cheat {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 6px;
+}
+
+.sum-cheat b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.sum-cheat.has b {
+  color: var(--danger);
+}
+
+/* Barra di avanzamento generica */
+.bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 500ms var(--ease-out);
+}
+
+.bar.water > span {
+  background: var(--water);
+}
+
+/* Acqua */
+.water-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.water-amount {
+  text-align: left;
+  padding: 0;
+}
+
+.water-btns {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-shrink: 0;
+}
+
+.water-btns .icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
+.btn-water {
+  height: 44px;
+  padding: 0 var(--s-4);
+  background: var(--water-soft);
+  color: var(--water);
+  font-size: 16px;
+}
+
+.btn-water svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+
+/* Schede della settimana: cerchi pieni se fatte, vuoti se mancanti */
+.wk-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.wk-circle {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--surface-3);
+  color: var(--text-3);
+  font-size: 19px;
+  font-weight: 700;
+  transition: transform 160ms var(--ease-out), background 200ms ease;
+}
+
+.wk-circle:active {
+  transform: scale(0.92);
+}
+
+.wk-circle.done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.wk-circle.running {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wk-sep {
+  width: 1px;
+  height: 28px;
+  background: var(--separator-strong);
+  margin: 0 2px;
+}
+
+.wk-row {
+  justify-content: space-between;
+}
+
+.wk-extras {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.wk-extras-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  margin-right: 2px;
+}
+
+.extra-chip {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Calendario */
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-3);
+}
+
+.cal-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px 2px;
+}
+
+.cal-wd {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  padding-bottom: 4px;
+}
+
+.cal-day {
+  height: 50px;
+  border-radius: var(--r-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1.5px solid transparent;
+  transition: background 120ms ease;
+}
+
+.cal-day:active {
+  background: var(--surface-2);
+}
+
+.cal-num {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cal-day.future .cal-num {
+  color: var(--text-3);
+}
+
+.cal-day.today {
+  border-color: var(--accent);
+  background: rgba(198, 244, 50, 0.06);
+}
+
+.cal-day.today .cal-num {
+  color: var(--accent);
+}
+
+.cal-dots {
+  display: flex;
+  gap: 3px;
+  height: 6px;
+}
+
+/* Puntini: vuoti (solo bordo) se l'obiettivo non è raggiunto, pieni se sì */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+}
+
+.dot.water.on { background: var(--water); border-color: var(--water); }
+.dot.diet.on { background: var(--diet); border-color: var(--diet); }
+.dot.gym.on { background: var(--accent); border-color: var(--accent); }
+
+.cal-legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 0.5px solid var(--separator);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-legend .dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* Dettaglio della giornata */
+.day-section + .day-section {
+  margin-top: var(--s-5);
+}
+
+.day-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: var(--s-2);
+}
+
+.day-section-head .dot {
+  width: 10px;
+  height: 10px;
+}
+
+.day-section-head .status-pill {
+  margin-left: auto;
+}
+
+.day-water {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.day-water .sum-big {
+  margin-top: 0;
+  font-size: 28px;
+}
+
+/* Stato della giornata */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.status-pill.clean {
+  background: var(--diet-soft);
+  color: var(--diet);
+}
+
+.status-pill.cheat {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.status-pill.small {
+  height: 22px;
+  font-size: 11px;
+}
+
+/* 12. DIETA: PIANO SETTIMANALE ------------------------------------------- */
+
+.week-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.25;
+}
+
+.week-label b {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.week-label span {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.alert-banner,
+.note-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  font-size: 14px;
+  line-height: 1.4;
+  margin-bottom: var(--s-2);
+}
+
+.alert-banner {
+  background: var(--danger-soft);
+  color: #ff8a82;
+  border: 0.5px solid rgba(255, 69, 58, 0.4);
+}
+
+.alert-banner b {
+  color: var(--danger);
+}
+
+.alert-banner svg.lucide,
+.note-banner svg.lucide {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.alert-banner svg.lucide {
+  color: var(--danger);
+}
+
+.note-banner {
+  background: var(--surface);
+  border: 0.5px solid var(--separator-strong);
+  color: var(--text-2);
+}
+
+/* Contatori fatti/previsti */
+.counters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-3) var(--s-3);
+}
+
+.counter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.counter-label {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.counter-value {
+  font-size: 15px;
+  color: var(--text-3);
+}
+
+.counter-value b {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.counter-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.counter-bar span {
+  display: block;
+  height: 100%;
+  background: var(--text-2);
+  border-radius: 2px;
+}
+
+.counter.met .counter-bar span {
+  background: var(--accent);
+}
+
+.counter.over .counter-value,
+.counter.over .counter-value b,
+.counter.over .counter-label {
+  color: var(--danger);
+}
+
+.counter.over .counter-bar span {
+  background: var(--danger);
+}
+
+/* Riepilogo settimana passata */
+.summary-week {
+  margin-bottom: var(--s-3);
+}
+
+.sw-stats {
+  display: flex;
+  gap: var(--s-5);
+  margin: var(--s-3) 0 var(--s-2);
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.sw-stats b {
+  font-size: 22px;
+  color: var(--text);
+  margin-right: 2px;
+}
+
+.sw-stats .cheat b {
+  color: var(--danger);
+}
+
+.sw-line {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 4px;
+}
+
+.sw-line.over {
+  color: var(--danger);
+}
+
+/* Giorni della settimana */
+.day-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin: var(--s-5) 0 var(--s-4);
+}
+
+.day-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 7px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 0.5px solid var(--separator);
+  transition: background 160ms ease, transform 140ms var(--ease-out);
+}
+
+.day-chip:active {
+  transform: scale(0.94);
+}
+
+.dc-wd {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+
+.dc-num {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.day-chip.today .dc-num {
+  color: var(--accent);
+}
+
+.day-chip.active {
+  background: var(--surface-3);
+  border-color: var(--separator-strong);
+}
+
+.day-chip.active .dc-wd {
+  color: var(--text);
+}
+
+.dc-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 2px;
+}
+
+.dc-dot.clean { background: var(--diet); }
+.dc-dot.cheat { background: var(--danger); }
+
+.day-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+
+.day-title h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Card del pasto */
+.meal-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+
+.meal-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.meal-card-head h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.meal-card-head h3 svg.lucide {
+  color: var(--text-2);
+}
+
+.meal-ok {
+  display: flex;
+  color: var(--diet);
+}
+
+.plan-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.4;
+  margin-top: var(--s-2);
+}
+
+.plan-hint svg.lucide {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cat-chip.solid {
+  background: var(--diet-soft);
+  color: var(--diet);
+}
+
+.cat-chip.carb {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.meal-logged {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 0.5px solid var(--separator);
+}
+
+.meal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meal-note {
+  font-size: 15px;
+  margin-top: 6px;
+}
+
+.meal-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.meal-actions .btn {
+  height: 40px;
+  font-size: 15px;
+  padding: 0 var(--s-4);
+}
+
+.meal-actions .btn-secondary svg.lucide {
+  width: 18px;
+  height: 18px;
+  color: var(--diet);
+}
+
+.meal-card.locked {
+  opacity: 0.6;
+}
+
+/* Interruttori in stile iOS */
+.switch-list {
+  margin-top: var(--s-2);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 56px;
+  padding: var(--s-2) var(--s-4);
+  position: relative;
+}
+
+.switch-row + .switch-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--s-4);
+  right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+
+.switch-row .row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.switch-row .row-title {
+  display: block;
+  font-size: 16px;
+}
+
+.switch-row .row-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.switch-row.compact {
+  min-height: 44px;
+  padding: var(--s-2) 0 0;
+}
+
+.switch {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 51px;
+  height: 31px;
+  border-radius: 16px;
+  background: var(--surface-3);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 200ms ease;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 240ms var(--ease-out);
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::after {
+  transform: translateX(20px);
+}
+
+.switch-row.danger .switch:checked {
+  background: var(--danger);
+}
+
+.switch:disabled {
+  opacity: 0.35;
+}
+
+/* Limiti settimanali */
+.target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+}
+
+.target-row .stepper {
+  width: 150px;
 }
 
 @keyframes ring-in {

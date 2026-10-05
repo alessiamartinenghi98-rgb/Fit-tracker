@@ -9,7 +9,7 @@
 import { openDB, requestPersistence } from './db.js';
 import { $, $$, hydrateIcons, bindScrollHeader, haptic, toast } from './ui.js';
 import { initWorkouts, refreshWorkouts } from './workouts.js';
-import { initDiet, refreshDiet } from './diet.js';
+import { initDiet, refreshDiet, showDietDate } from './diet.js';
 import { initProgress, renderProgress } from './progress.js';
 import { initHome, renderHome } from './home.js';
 
@@ -76,6 +76,12 @@ async function start() {
   // Quando un allenamento cambia (iniziato, terminato, eliminato) la Home si aggiorna
   document.addEventListener('data-changed', () => {
     if (currentView === 'home') renderHome();
+  });
+
+  // Dal calendario della Home: "Apri nella Dieta" porta al giorno scelto
+  document.addEventListener('open-diet', async (e) => {
+    await showDietDate(e.detail);
+    showView('diet');
   });
 
   // Archiviazione persistente: il browser non cancellerà i dati se manca spazio

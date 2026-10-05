@@ -1,386 +1,641 @@
 /* ==========================================================================
-   diet.js — Sezione Dieta
+   diet.js — Sezione Dieta (piano settimanale)
    --------------------------------------------------------------------------
-   - Navigazione per giorno (frecce o selettore data)
-   - Riepilogo giornaliero: calorie e macronutrienti
-   - Pasti divisi in colazione, pranzo, cena e spuntini
-   - Storico: elenco dei giorni registrati con i totali
+   - Settimana lunedì → domenica, con frecce per rivedere le precedenti
+   - Giorni selezionabili; per ogni giorno colazione, spuntino, pranzo, cena
+     con il suggerimento del piano
+   - Pranzo e cena: categoria (carne, pesce, uova, legumi, latticino,
+     pasto libero), "+ carbo", nota libera; "Segna come sgarro" su ogni pasto
+   - Contatori settimanali fatti/previsti con avvisi in rosso se superati
+   - Promemoria se il carbo è segnato più di una volta al giorno
+   - Regole, porzioni dei carboidrati e piano modificabile
    ========================================================================== */
 
 import * as db from './db.js';
 import {
-  $, esc, icon, toast, haptic, openSheet, confirmSheet, emptyState,
-  todayISO, addDays, formatDay, fmtInt, fmtNum, parseNum,
+  $, esc, icon, toast, haptic, openSheet,
+  todayISO, addDays, startOfWeek, formatFullDate, formatShortDate, formatDay, fmtInt, fmtNum,
 } from './ui.js';
-
-/* Tipi di pasto, nell'ordine in cui compaiono nella giornata */
-const MEAL_TYPES = [
-  { id: 'colazione', label: 'Colazione', icon: 'coffee' },
-  { id: 'pranzo', label: 'Pranzo', icon: 'sun' },
-  { id: 'cena', label: 'Cena', icon: 'moon' },
-  { id: 'spuntino', label: 'Spuntini', single: 'Spuntino', icon: 'apple' },
-];
+import {
+  CATEGORIES, SLOTS, WEEKDAYS, loadPlan, getPlan, savePlan, planForDate,
+  dayStatus, carbCount, categoryCounts, weekDates, isCheatMeal, categoryLabel, counterLabel,
+} from './plan.js';
 
 const state = {
-  date: todayISO(), // giorno visualizzato
-  meals: [],        // pasti del giorno visualizzato
+  weekStart: startOfWeek(todayISO()), // lunedì della settimana mostrata
+  selected: todayISO(),               // giorno selezionato
+  days: new Map(),                    // diario dei giorni della settimana mostrata
+  legacyCount: 0,                     // voci del vecchio diario (calorie)
 };
 
-/* --- Calcoli ------------------------------------------------------------- */
-
-/** Calorie stimate dai macronutrienti (4 kcal/g proteine e carboidrati, 9 kcal/g grassi). */
-function kcalFromMacros(p, c, f) {
-  return (p || 0) * 4 + (c || 0) * 4 + (f || 0) * 9;
-}
-
-function totals(meals) {
-  return meals.reduce((t, m) => ({
-    kcal: t.kcal + (m.kcal || 0),
-    protein: t.protein + (m.protein || 0),
-    carbs: t.carbs + (m.carbs || 0),
-    fat: t.fat + (m.fat || 0),
-  }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
-}
-
-/** Ora del giorno → tipo di pasto più probabile (per il nuovo inserimento). */
-function guessMealType() {
-  const h = new Date().getHours();
-  if (h < 11) return 'colazione';
-  if (h < 15) return 'pranzo';
-  if (h >= 19) return 'cena';
-  return 'spuntino';
-}
+const notifyChange = () => document.dispatchEvent(new CustomEvent('data-changed'));
 
 /* --- Inizializzazione ---------------------------------------------------- */
 
 export async function initDiet() {
-  await loadDay();
+  await loadPlan();
+  state.legacyCount = (await db.getAll('meals')).length;
+  await loadWeek();
   render();
 
-  $('#btn-diet-history').addEventListener('click', openHistory);
+  $('#btn-diet-rules').addEventListener('click', openRules);
 
   const root = $('#diet-content');
   root.addEventListener('click', (e) => {
     const t = e.target;
-    if (t.closest('[data-action="prev"]')) return changeDay(-1);
-    if (t.closest('[data-action="next"]')) return changeDay(1);
-    const add = t.closest('[data-add]');
-    if (add) return openMealSheet(null, add.dataset.add || guessMealType());
-    const item = t.closest('[data-meal]');
-    if (item) {
-      const meal = state.meals.find((m) => m.id === item.dataset.meal);
-      if (meal) openMealSheet(meal);
-    }
-  });
-  root.addEventListener('change', async (e) => {
-    if (e.target.id === 'diet-date' && e.target.value) {
-      state.date = e.target.value;
-      await loadDay();
-      render();
-    }
+    const action = t.closest('[data-action]')?.dataset.action;
+    if (action === 'prev-week') return changeWeek(-1);
+    if (action === 'next-week') return changeWeek(1);
+    if (action === 'rules') return openRules();
+    if (action === 'portions') return openPortions();
+    if (action === 'edit-plan') return openPlanEditor();
+    if (action === 'legacy') return openLegacyDiary();
+    const dayBtn = t.closest('[data-date]');
+    if (dayBtn) { state.selected = dayBtn.dataset.date; haptic(5); return render(); }
+    const quick = t.closest('[data-quick]');
+    if (quick) return quickLog(quick.dataset.quick);
+    const meal = t.closest('[data-slot]');
+    if (meal && !meal.classList.contains('locked')) openMealSheet(meal.dataset.slot);
   });
 }
 
 /** Ricarica dopo un'importazione dei dati. */
 export async function refreshDiet() {
-  await loadDay();
+  await loadPlan();
+  state.legacyCount = (await db.getAll('meals')).length;
+  await loadWeek();
   render();
 }
 
-async function loadDay() {
-  state.meals = (await db.getByDate('meals', state.date))
-    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+/** Mostra un giorno preciso (dal calendario della Home). */
+export async function showDietDate(date) {
+  state.weekStart = startOfWeek(date);
+  state.selected = date;
+  await loadWeek();
+  render();
 }
 
-async function changeDay(delta) {
-  const next = addDays(state.date, delta);
-  if (next > todayISO()) return;
+async function loadWeek() {
+  const dates = weekDates(state.weekStart);
+  const rows = await Promise.all(dates.map((d) => db.get('dietDays', d)));
+  state.days = new Map(dates.map((d, i) => [d, rows[i] || null]));
+}
+
+async function changeWeek(delta) {
+  const next = addDays(state.weekStart, delta * 7);
+  if (next > startOfWeek(todayISO())) return;
+  state.weekStart = next;
+  // Nella settimana corrente si seleziona oggi, nelle altre il lunedì
+  const today = todayISO();
+  state.selected = next === startOfWeek(today) ? today : next;
   haptic(5);
-  state.date = next;
-  await loadDay();
+  await loadWeek();
   render();
 }
 
 /* --- Rendering ----------------------------------------------------------- */
 
 function render() {
-  const root = $('#diet-content');
-  const isToday = state.date >= todayISO();
+  const plan = getPlan();
+  const today = todayISO();
+  const isCurrentWeek = state.weekStart === startOfWeek(today);
+  const dates = weekDates(state.weekStart);
+  const days = dates.map((d) => state.days.get(d));
+  const counts = categoryCounts(days);
+  const over = CATEGORIES.filter((c) => counts[c.id] > (plan.targets[c.id] ?? 0));
 
-  const nav = `
+  // Navigazione tra le settimane
+  let html = `
     <div class="day-nav">
-      <button class="icon-btn" data-action="prev" aria-label="Giorno precedente">${icon('chevron-left')}</button>
-      <label class="date-pill">
-        ${icon('calendar-days')}<span>${esc(formatDay(state.date, { long: true }))}</span>
-        <input type="date" id="diet-date" value="${state.date}" max="${todayISO()}" aria-label="Scegli il giorno">
-      </label>
-      <button class="icon-btn" data-action="next" aria-label="Giorno successivo" ${isToday ? 'disabled' : ''}>${icon('chevron-right')}</button>
+      <button class="icon-btn" data-action="prev-week" aria-label="Settimana precedente">${icon('chevron-left')}</button>
+      <div class="week-label">
+        <b>${esc(formatShortDate(dates[0]))} – ${esc(formatShortDate(dates[6]))}</b>
+        <span>${isCurrentWeek ? 'Questa settimana' : 'Settimana passata'}</span>
+      </div>
+      <button class="icon-btn" data-action="next-week" aria-label="Settimana successiva" ${isCurrentWeek ? 'disabled' : ''}>${icon('chevron-right')}</button>
     </div>`;
 
-  if (state.meals.length === 0) {
-    root.innerHTML = nav + `<div class="card">${emptyState({
-      iconName: 'utensils',
-      title: 'Nessun pasto registrato',
-      text: isToday
-        ? 'Annota cosa mangi oggi. Calorie e macronutrienti sono facoltativi.'
-        : 'Per questo giorno non hai registrato pasti.',
-      action: `<button class="btn btn-primary" data-add="">${icon('plus')} Aggiungi pasto</button>`,
-    })}</div>`;
-    return;
+  // Avvisi in rosso per le categorie superate
+  html += over.map((c) => `
+    <div class="alert-banner">${icon('triangle-alert')}
+      <span><b>${esc(counterLabel(c.id))}:</b> ${counts[c.id]} volte ${isCurrentWeek ? 'questa settimana' : 'in quella settimana'}, il piano ne prevede ${plan.targets[c.id]}</span>
+    </div>`).join('');
+
+  // Riepilogo delle settimane passate
+  if (!isCurrentWeek) html += weekSummary(days, counts);
+
+  // Contatori settimanali fatti/previsti
+  html += `
+    <div class="card counters-card">
+      <div class="card-head"><span class="sum-label">${icon('chart-no-axes-column')} Categorie della settimana</span></div>
+      <div class="counters">
+        ${CATEGORIES.map((c) => {
+          const n = counts[c.id];
+          const target = plan.targets[c.id] ?? 0;
+          const cls = n > target ? 'over' : n === target && target > 0 ? 'met' : '';
+          return `
+            <div class="counter ${cls}">
+              <span class="counter-label">${esc(c.counter)}</span>
+              <span class="counter-value num"><b>${n}</b>/${target}</span>
+              <span class="counter-bar"><span style="width:${target ? Math.min(100, (n / target) * 100) : 0}%"></span></span>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+  // Giorni della settimana
+  html += `<div class="day-strip">${dates.map((d, i) => {
+    const st = dayStatus(state.days.get(d));
+    return `
+      <button class="day-chip ${d === state.selected ? 'active' : ''} ${d === today ? 'today' : ''}" data-date="${d}">
+        <span class="dc-wd">${WEEKDAYS[i].slice(0, 3)}</span>
+        <span class="dc-num num">${Number(d.slice(8))}</span>
+        <span class="dc-dot ${st}"></span>
+      </button>`;
+  }).join('')}</div>`;
+
+  html += dayView(state.selected);
+
+  // Informazioni e impostazioni
+  html += `
+    <div class="list" style="margin-top:var(--s-5)">
+      <button class="list-row" data-action="rules">
+        <span class="row-icon">${icon('book-open')}</span>
+        <span class="row-main"><span class="row-title">Regole</span><span class="row-sub">Olio, condimenti, bevande, dolci</span></span>
+        <span class="row-trail">${icon('chevron-right')}</span>
+      </button>
+      <button class="list-row" data-action="portions">
+        <span class="row-icon">${icon('wheat')}</span>
+        <span class="row-main"><span class="row-title">Porzioni carbo</span><span class="row-sub">Una sola volta al giorno</span></span>
+        <span class="row-trail">${icon('chevron-right')}</span>
+      </button>
+      <button class="list-row" data-action="edit-plan">
+        <span class="row-icon">${icon('pencil')}</span>
+        <span class="row-main"><span class="row-title">Modifica piano</span><span class="row-sub">Pasti, categorie, limiti settimanali, regole</span></span>
+        <span class="row-trail">${icon('chevron-right')}</span>
+      </button>
+      ${state.legacyCount ? `
+      <button class="list-row" data-action="legacy">
+        <span class="row-icon">${icon('history')}</span>
+        <span class="row-main"><span class="row-title">Diario precedente</span><span class="row-sub">${state.legacyCount} voci con calorie e macro</span></span>
+        <span class="row-trail">${icon('chevron-right')}</span>
+      </button>` : ''}
+    </div>`;
+
+  $('#diet-content').innerHTML = html;
+}
+
+/** Breve riepilogo di una settimana passata. */
+function weekSummary(days, counts) {
+  const plan = getPlan();
+  const statuses = days.map(dayStatus);
+  const clean = statuses.filter((s) => s === 'clean').length;
+  const cheat = statuses.filter((s) => s === 'cheat').length;
+  const over = CATEGORIES.filter((c) => counts[c.id] > plan.targets[c.id]);
+  const missing = CATEGORIES.filter((c) => counts[c.id] < plan.targets[c.id]);
+  const fmt = (list) => list.map((c) => `${counterLabel(c.id).toLowerCase()} ${counts[c.id]}/${plan.targets[c.id]}`).join(', ');
+  return `
+    <div class="card summary-week">
+      <div class="sum-label">${icon('clipboard-list')} Riepilogo della settimana</div>
+      <div class="sw-stats">
+        <span><b class="num">${clean}</b> ${clean === 1 ? 'giorno pulito' : 'giorni puliti'}</span>
+        <span class="${cheat ? 'cheat' : ''}"><b class="num">${cheat}</b> ${cheat === 1 ? 'sgarro' : 'sgarri'}</span>
+      </div>
+      ${over.length ? `<div class="sw-line over">Superate: ${esc(fmt(over))}</div>` : ''}
+      ${missing.length ? `<div class="sw-line">Mancanti: ${esc(fmt(missing))}</div>` : ''}
+      ${!over.length && !missing.length ? '<div class="sw-line">Tutte le categorie come da piano.</div>' : ''}
+    </div>`;
+}
+
+/** Pasti del giorno selezionato. */
+function dayView(date) {
+  const day = state.days.get(date);
+  const status = dayStatus(day);
+  const future = date > todayISO();
+  const plan = planForDate(date);
+  const title = formatFullDate(date);
+
+  const pill = future ? '<span class="status-pill">In programma</span>' : {
+    clean: '<span class="status-pill clean">Giornata pulita</span>',
+    cheat: '<span class="status-pill cheat">Sgarro</span>',
+    empty: '<span class="status-pill">Da segnare</span>',
+  }[status];
+
+  let html = `
+    <div class="day-title">
+      <h2>${esc(title.charAt(0).toUpperCase() + title.slice(1))}</h2>${pill}
+    </div>`;
+
+  if (carbCount(day) > 1) {
+    html += `<div class="note-banner">${icon('wheat')}<span>Hai segnato il carbo ${carbCount(day)} volte: il piano ne prevede una sola porzione al giorno.</span></div>`;
   }
 
-  root.innerHTML = nav + summaryCard() + MEAL_TYPES.map(mealSection).join('');
+  html += SLOTS.map((slot) => mealCard(slot, plan[slot.id], day?.meals?.[slot.id], future)).join('');
+  if (future) html += '<p class="hint">Potrai segnare i pasti a partire da quel giorno.</p>';
+  return html;
 }
 
-function summaryCard() {
-  const t = totals(state.meals);
-  // Quota di calorie per ciascun macro (per la barra impilata)
-  const pK = t.protein * 4;
-  const cK = t.carbs * 4;
-  const fK = t.fat * 9;
-  const sum = pK + cK + fK;
-  const bar = sum > 0
-    ? `<span class="m-p" style="flex-grow:${pK}"></span><span class="m-c" style="flex-grow:${cK}"></span><span class="m-f" style="flex-grow:${fK}"></span>`
+function mealCard(slot, planned, logged, future) {
+  const planText = slot.main ? planned.text : planned;
+  const planCat = slot.main ? `<span class="cat-chip">${esc(categoryLabel(planned.category))}</span>` : '';
+
+  let body;
+  if (logged) {
+    const tags = [];
+    if (logged.category) tags.push(`<span class="cat-chip solid">${esc(categoryLabel(logged.category))}</span>`);
+    if (logged.carbo) tags.push('<span class="cat-chip carb">+ carbo</span>');
+    if (!logged.category && !logged.note) tags.push('<span class="cat-chip solid">Come da piano</span>');
+    body = `
+      <div class="meal-logged">
+        ${tags.length ? `<div class="meal-tags">${tags.join('')}</div>` : ''}
+        ${logged.note ? `<div class="meal-note">${esc(logged.note)}</div>` : ''}
+      </div>`;
+  } else if (!future) {
+    body = `
+      <div class="meal-actions">
+        <button class="btn btn-secondary" data-quick="${slot.id}">${icon('check')} Come da piano</button>
+        <button class="btn btn-ghost" data-slot="${slot.id}">Altro…</button>
+      </div>`;
+  } else {
+    body = '';
+  }
+
+  const badge = logged
+    ? (isCheatMeal(logged) ? '<span class="status-pill cheat small">Sgarro</span>' : `<span class="meal-ok">${icon('circle-check')}</span>`)
     : '';
-  const pct = (v) => (sum > 0 ? ` · ${Math.round((v / sum) * 100)}%` : '');
-  const n = state.meals.length;
 
   return `
-    <div class="card">
-      <div class="field-label" style="margin-bottom:var(--s-1)">Calorie</div>
-      <div class="kcal-hero"><span class="big num">${fmtInt(t.kcal)}</span><span class="unit">kcal</span></div>
-      <div class="kcal-sub">${n} ${n === 1 ? 'voce registrata' : 'voci registrate'}</div>
-      <div class="macro-bar" role="img" aria-label="Ripartizione delle calorie tra i macronutrienti">${bar}</div>
-      <div class="macro-grid">
-        ${macro('Proteine', t.protein, 'm-p', pct(pK))}
-        ${macro('Carboidrati', t.carbs, 'm-c', pct(cK))}
-        ${macro('Grassi', t.fat, 'm-f', pct(fK))}
+    <div class="card meal-card ${logged ? 'card-tap logged' : ''} ${future ? 'locked' : ''}" ${logged ? `data-slot="${slot.id}"` : ''}>
+      <div class="meal-card-head">
+        <h3>${icon(slot.icon)}${esc(slot.label)}</h3>
+        ${badge}
       </div>
+      <div class="plan-hint">${planCat}<span>${esc(planText)}</span></div>
+      ${body}
     </div>`;
 }
 
-function macro(label, grams, cls, pct) {
-  return `
-    <div class="macro">
-      <div class="lbl"><span class="dot ${cls}"></span>${label}</div>
-      <div class="val num">${fmtInt(grams)}<small>g</small></div>
-      <div class="kcal-sub" style="margin-top:0">${pct ? pct.slice(3) : '&nbsp;'}</div>
-    </div>`;
+/* --- Inserimento e modifica dei pasti ------------------------------------ */
+
+async function saveMeal(date, slotId, meal) {
+  const day = state.days.get(date) || { date, meals: {} };
+  if (meal) day.meals[slotId] = meal;
+  else delete day.meals[slotId];
+  day.updatedAt = Date.now();
+  if (Object.keys(day.meals).length === 0) {
+    await db.del('dietDays', date);
+    state.days.set(date, null);
+  } else {
+    await db.put('dietDays', day);
+    state.days.set(date, day);
+  }
+  notifyChange();
 }
 
-function mealSubtitle(m) {
-  const parts = [];
-  if (m.kcal) parts.push(`${fmtInt(m.kcal)} kcal`);
-  if (m.protein) parts.push(`P ${fmtNum(m.protein)} g`);
-  if (m.carbs) parts.push(`C ${fmtNum(m.carbs)} g`);
-  if (m.fat) parts.push(`G ${fmtNum(m.fat)} g`);
-  return parts.join(' · ');
+/** "Come da piano": un tocco e il pasto è segnato con la categoria prevista. */
+async function quickLog(slotId) {
+  const date = state.selected;
+  const planned = planForDate(date)[slotId];
+  const slot = SLOTS.find((s) => s.id === slotId);
+  const meal = slot.main
+    ? { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false, at: Date.now() }
+    : { note: '', cheat: false, at: Date.now() };
+  await saveMeal(date, slotId, meal);
+  haptic(15);
+  render();
+  warnIfNeeded(date, slotId);
 }
 
-function mealSection(type) {
-  const items = state.meals.filter((m) => m.type === type.id);
-  const kcal = totals(items).kcal;
-
-  const rows = items.map((m) => {
-    const sub = mealSubtitle(m);
-    return `
-      <button class="list-row meal-item" data-meal="${m.id}">
-        <span class="row-main">
-          <span class="row-title">${esc(m.description)}</span>
-          ${sub ? `<span class="row-sub num">${sub}</span>` : ''}
-        </span>
-        <span class="row-trail">${icon('chevron-right')}</span>
-      </button>`;
-  }).join('');
-
-  const addLabel = items.length ? 'Aggiungi' : `Aggiungi ${(type.single || type.label).toLowerCase()}`;
-
-  return `
-    <section class="meal-section">
-      <div class="meal-head">
-        <h3>${icon(type.icon)}${type.label}</h3>
-        ${kcal ? `<span class="meal-kcal num">${fmtInt(kcal)} kcal</span>` : ''}
-      </div>
-      <div class="list ${items.length ? '' : 'meal-empty'}" style="${items.length ? '' : 'background:transparent'}">
-        ${rows}
-        <button class="meal-add" data-add="${type.id}">${icon('plus')} ${addLabel}</button>
-      </div>
-    </section>`;
+/** Avvisa subito se il pasto appena segnato supera un limite. */
+function warnIfNeeded(date, slotId) {
+  const meal = state.days.get(date)?.meals?.[slotId];
+  if (!meal) return;
+  const plan = getPlan();
+  if (meal.category) {
+    const counts = categoryCounts(weekDates(state.weekStart).map((d) => state.days.get(d)));
+    const n = counts[meal.category];
+    if (n > plan.targets[meal.category]) {
+      toast(`${counterLabel(meal.category)}: ${n} volte, il piano ne prevede ${plan.targets[meal.category]}`, { error: true });
+      return;
+    }
+  }
+  if (meal.carbo && carbCount(state.days.get(date)) > 1) {
+    toast('Carbo: una sola porzione al giorno', { error: true });
+    return;
+  }
+  toast('Pasto segnato');
 }
 
-/* --- Inserimento e modifica di un pasto ---------------------------------- */
+function openMealSheet(slotId) {
+  const date = state.selected;
+  const slot = SLOTS.find((s) => s.id === slotId);
+  const planned = planForDate(date)[slotId];
+  const existing = state.days.get(date)?.meals?.[slotId] || null;
+  const draft = existing
+    ? { ...existing }
+    : slot.main
+      ? { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false }
+      : { note: '', cheat: false };
 
-function openMealSheet(meal, presetType) {
-  const editing = Boolean(meal);
-  let type = meal ? meal.type : presetType;
-
-  const numField = (key, label, unit, value) => `
-    <label class="field" style="margin-bottom:0">
-      <span class="field-label">${label} <span class="opt">· facoltativo</span></span>
-      <span class="input-unit">
-        <input class="input num" data-f="${key}" type="text" inputmode="decimal"
-               value="${fmtNum(value)}" placeholder="0" autocomplete="off">
-        <span class="unit">${unit}</span>
-      </span>
+  const switchRow = (key, label, sub, cls = '') => `
+    <label class="switch-row ${cls}">
+      <span class="row-main"><span class="row-title">${label}</span>${sub ? `<span class="row-sub" data-sub-${key}>${sub}</span>` : ''}</span>
+      <input type="checkbox" class="switch" data-k="${key}" ${draft[key] ? 'checked' : ''}>
     </label>`;
 
   const s = openSheet({
-    title: editing ? 'Modifica pasto' : 'Nuovo pasto',
-    tall: false,
+    title: `${slot.label} · ${formatDay(date)}`,
     html: `
-      <div class="field">
-        <span class="field-label">Pasto</span>
-        <div class="chips" data-types>
-          ${MEAL_TYPES.map((t) => `
-            <button class="chip ${t.id === type ? 'active' : ''}" data-type="${t.id}">
-              ${icon(t.icon)}${t.single || t.label}
-            </button>`).join('')}
-        </div>
+      <div class="plan-hint" style="margin-bottom:var(--s-4)">
+        ${icon('clipboard-list')}<span>Piano: ${esc(slot.main ? planned.text : planned)}</span>
       </div>
+      ${slot.main ? `
+        <div class="field">
+          <span class="field-label">Cosa hai mangiato</span>
+          <div class="chips" data-cats>
+            ${CATEGORIES.map((c) => `<button class="chip ${draft.category === c.id ? 'active' : ''}" data-cat="${c.id}">${esc(c.label)}</button>`).join('')}
+          </div>
+        </div>` : ''}
       <label class="field">
-        <span class="field-label">Cosa hai mangiato</span>
-        <textarea class="input" data-f="description" rows="3" maxlength="300"
-                  placeholder="Es. yogurt greco, avena e mirtilli">${esc(meal?.description || '')}</textarea>
+        <span class="field-label">Note <span class="opt">· facoltative</span></span>
+        <textarea class="input" data-note rows="2" maxlength="300"
+                  placeholder="${slot.main ? 'Es. pollo alla piastra, finocchi, riso' : 'Lascia vuoto se come da piano'}">${esc(draft.note || '')}</textarea>
       </label>
-      <div class="grid-2">
-        ${numField('kcal', 'Calorie', 'kcal', meal?.kcal)}
-        ${numField('protein', 'Proteine', 'g', meal?.protein)}
-        ${numField('carbs', 'Carboidrati', 'g', meal?.carbs)}
-        ${numField('fat', 'Grassi', 'g', meal?.fat)}
+      <div class="list switch-list">
+        ${slot.main ? switchRow('carbo', '+ carbo', 'Una sola porzione al giorno') : ''}
+        ${switchRow('cheat', 'Segna come sgarro', draft.category === 'libero' ? 'Il pasto libero non conta come sgarro' : 'La giornata diventa sgarro', 'danger')}
       </div>
-      <p class="footnote">Se lasci vuote le calorie ma inserisci i macronutrienti, le calcolo io.</p>
       <div class="sheet-actions">
-        <button class="btn btn-primary btn-block" data-save>${icon('check')} ${editing ? 'Salva modifiche' : 'Aggiungi pasto'}</button>
-        ${editing ? `<button class="btn btn-danger btn-block" data-delete>${icon('trash-2')} Elimina pasto</button>` : ''}
+        <button class="btn btn-primary btn-block" data-save>${icon('check')} ${existing ? 'Salva modifiche' : 'Segna pasto'}</button>
+        ${existing ? `<button class="btn btn-danger btn-block" data-delete>${icon('trash-2')} Togli</button>` : ''}
       </div>`,
   });
 
   const body = s.body;
-  const f = (k) => body.querySelector(`[data-f="${k}"]`);
-
-  // Selezione del tipo di pasto
-  body.querySelector('[data-types]').addEventListener('click', (e) => {
-    const chip = e.target.closest('[data-type]');
-    if (!chip) return;
-    type = chip.dataset.type;
-    body.querySelectorAll('[data-type]').forEach((c) => c.classList.toggle('active', c === chip));
-    haptic(5);
-  });
-
-  // Stima delle calorie mostrata come suggerimento mentre si scrivono i macro
-  const updatePlaceholder = () => {
-    const est = kcalFromMacros(parseNum(f('protein').value), parseNum(f('carbs').value), parseNum(f('fat').value));
-    f('kcal').placeholder = est > 0 ? `≈ ${fmtInt(est)}` : '0';
+  const cheatInput = $('[data-k="cheat"]', body);
+  const syncCheat = () => {
+    // Con il pasto libero l'interruttore sgarro non ha effetto
+    const free = draft.category === 'libero';
+    cheatInput.disabled = free;
+    if (free) cheatInput.checked = false;
+    const sub = $('[data-sub-cheat]', body);
+    if (sub) sub.textContent = free ? 'Il pasto libero non conta come sgarro' : 'La giornata diventa sgarro';
   };
-  ['protein', 'carbs', 'fat'].forEach((k) => f(k).addEventListener('input', updatePlaceholder));
-  updatePlaceholder();
+  syncCheat();
 
-  // Un nuovo pasto apre subito la tastiera sulla descrizione
-  if (!editing) setTimeout(() => f('description').focus(), 400);
-
-  body.querySelector('[data-save]').addEventListener('click', async () => {
-    const description = f('description').value.trim();
-    if (!description) {
-      f('description').focus();
-      return toast('Scrivi cosa hai mangiato', { error: true });
-    }
-    const clean = (v) => { const n = parseNum(v); return n === null ? null : Math.max(0, n); };
-    const protein = clean(f('protein').value);
-    const carbs = clean(f('carbs').value);
-    const fat = clean(f('fat').value);
-    let kcal = clean(f('kcal').value);
-    if (kcal === null && (protein || carbs || fat)) kcal = Math.round(kcalFromMacros(protein, carbs, fat));
-
-    const record = {
-      id: meal?.id || db.uid(),
-      date: meal?.date || state.date,
-      type,
-      description,
-      kcal, protein, carbs, fat,
-      createdAt: meal?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    };
-    await db.put('meals', record);
-    s.close();
-    await loadDay();
-    render();
-    haptic(15);
-    toast(editing ? 'Pasto aggiornato' : 'Pasto aggiunto');
+  $('[data-cats]', body)?.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-cat]');
+    if (!chip) return;
+    draft.category = chip.dataset.cat;
+    body.querySelectorAll('[data-cat]').forEach((c) => c.classList.toggle('active', c === chip));
+    haptic(5);
+    syncCheat();
   });
 
-  body.querySelector('[data-delete]')?.addEventListener('click', async () => {
+  $('[data-save]', body).addEventListener('click', async () => {
+    if (slot.main && !draft.category) return toast('Scegli la categoria', { error: true });
+    const meal = {
+      ...(slot.main ? { category: draft.category, carbo: $('[data-k="carbo"]', body).checked } : {}),
+      note: $('[data-note]', body).value.trim(),
+      cheat: draft.category === 'libero' ? false : cheatInput.checked,
+      at: existing?.at || Date.now(),
+    };
+    await saveMeal(date, slotId, meal);
     s.close();
-    const ok = await confirmSheet({
-      title: 'Eliminare il pasto?',
-      message: `«${meal.description}» verrà eliminato definitivamente.`,
-      confirmLabel: 'Elimina',
-      danger: true,
-    });
-    if (!ok) return;
-    await db.del('meals', meal.id);
-    await loadDay();
+    haptic(15);
     render();
-    toast('Pasto eliminato');
+    warnIfNeeded(date, slotId);
+  });
+
+  $('[data-delete]', body)?.addEventListener('click', async () => {
+    await saveMeal(date, slotId, null);
+    s.close();
+    render();
+    toast('Pasto tolto');
   });
 }
 
-/* --- Storico per data ---------------------------------------------------- */
+/* --- Regole e porzioni --------------------------------------------------- */
 
-async function openHistory() {
+function linesHTML(text) {
+  return `<ul class="notes-list">${text.split('\n').map((l) => l.trim()).filter(Boolean)
+    .map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
+}
+
+function openRules() {
+  openSheet({
+    title: 'Regole',
+    html: `<div class="card notes-card">${linesHTML(getPlan().rules)}</div>
+      <p class="footnote">Puoi modificarle da "Modifica piano".</p>`,
+  });
+}
+
+function openPortions() {
+  openSheet({
+    title: 'Porzioni carbo',
+    html: `<div class="card notes-card">
+        <div class="notes-title">Una sola volta al giorno</div>${linesHTML(getPlan().carbPortions)}
+      </div>`,
+  });
+}
+
+/* --- Modifica del piano -------------------------------------------------- */
+
+function openPlanEditor() {
+  const rows = () => {
+    const plan = getPlan();
+    return `
+      ${plan.days.map((d, i) => `
+        <button class="list-row" data-day-i="${i}">
+          <span class="row-icon num">${WEEKDAYS[i].slice(0, 2)}</span>
+          <span class="row-main"><span class="row-title">${WEEKDAYS[i]}</span>
+          <span class="row-sub">P ${esc(categoryLabel(d.pranzo.category))}${d.pranzo.carbo ? ' + carbo' : ''} · C ${esc(categoryLabel(d.cena.category))}${d.cena.carbo ? ' + carbo' : ''}</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>`).join('')}`;
+  };
+
+  const s = openSheet({
+    title: 'Modifica piano',
+    tall: true,
+    html: `
+      <div class="field-label">Giorni</div>
+      <div class="list" data-rows>${rows()}</div>
+      <div class="field-label" style="margin-top:var(--s-5)">Altro</div>
+      <div class="list">
+        <button class="list-row" data-edit="targets">
+          <span class="row-icon">${icon('chart-no-axes-column')}</span>
+          <span class="row-main"><span class="row-title">Limiti settimanali</span><span class="row-sub">Quante volte per categoria</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>
+        <button class="list-row" data-edit="rules">
+          <span class="row-icon">${icon('book-open')}</span>
+          <span class="row-main"><span class="row-title">Regole</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>
+        <button class="list-row" data-edit="carbPortions">
+          <span class="row-icon">${icon('wheat')}</span>
+          <span class="row-main"><span class="row-title">Porzioni carbo</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>
+      </div>
+      <p class="footnote">Le modifiche valgono per tutti i giorni, anche quelli già passati: i pasti che hai segnato restano invariati.</p>`,
+    onClose: render,
+  });
+
+  const refresh = () => { $('[data-rows]', s.body).innerHTML = rows(); };
+  s.body.addEventListener('click', (e) => {
+    const day = e.target.closest('[data-day-i]');
+    if (day) return editPlanDay(Number(day.dataset.dayI), refresh);
+    const what = e.target.closest('[data-edit]')?.dataset.edit;
+    if (what === 'targets') return editTargets();
+    if (what) return editPlanText(what);
+  });
+}
+
+function editPlanDay(i, onDone) {
+  const plan = getPlan();
+  const d = structuredClone(plan.days[i]);
+
+  const mainBlock = (slotId, label) => `
+    <div class="field">
+      <span class="field-label">${label}</span>
+      <div class="chips" data-cats="${slotId}" style="margin-bottom:var(--s-2)">
+        ${CATEGORIES.map((c) => `<button class="chip ${d[slotId].category === c.id ? 'active' : ''}" data-cat="${c.id}">${esc(c.label)}</button>`).join('')}
+      </div>
+      <textarea class="input" data-text="${slotId}" rows="2">${esc(d[slotId].text)}</textarea>
+      <label class="switch-row compact">
+        <span class="row-main"><span class="row-title">+ carbo</span></span>
+        <input type="checkbox" class="switch" data-carbo="${slotId}" ${d[slotId].carbo ? 'checked' : ''}>
+      </label>
+    </div>`;
+
+  const s = openSheet({
+    title: WEEKDAYS[i],
+    tall: true,
+    html: `
+      <label class="field"><span class="field-label">Colazione</span>
+        <textarea class="input" data-text="colazione" rows="2">${esc(d.colazione)}</textarea></label>
+      <label class="field"><span class="field-label">Spuntino</span>
+        <textarea class="input" data-text="spuntino" rows="2">${esc(d.spuntino)}</textarea></label>
+      ${mainBlock('pranzo', 'Pranzo')}
+      ${mainBlock('cena', 'Cena')}
+      <div class="sheet-actions"><button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button></div>`,
+  });
+
+  s.body.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-cat]');
+    if (!chip) return;
+    const group = chip.closest('[data-cats]');
+    d[group.dataset.cats].category = chip.dataset.cat;
+    group.querySelectorAll('[data-cat]').forEach((c) => c.classList.toggle('active', c === chip));
+  });
+
+  $('[data-save]', s.body).addEventListener('click', async () => {
+    d.colazione = $('[data-text="colazione"]', s.body).value.trim();
+    d.spuntino = $('[data-text="spuntino"]', s.body).value.trim();
+    for (const slotId of ['pranzo', 'cena']) {
+      d[slotId].text = $(`[data-text="${slotId}"]`, s.body).value.trim();
+      d[slotId].carbo = $(`[data-carbo="${slotId}"]`, s.body).checked;
+    }
+    plan.days[i] = d;
+    await savePlan(plan);
+    s.close();
+    onDone();
+    toast('Piano aggiornato');
+  });
+}
+
+function editTargets() {
+  const plan = getPlan();
+  const draft = { ...plan.targets };
+  const s = openSheet({
+    title: 'Limiti settimanali',
+    html: `
+      ${CATEGORIES.map((c) => `
+        <div class="target-row">
+          <span class="row-title">${esc(c.counter)}</span>
+          <div class="stepper" data-t="${c.id}">
+            <button data-d="-1" aria-label="Meno">${icon('minus')}</button>
+            <input type="text" inputmode="numeric" value="${draft[c.id]}" autocomplete="off">
+            <button data-d="1" aria-label="Più">${icon('plus')}</button>
+          </div>
+        </div>`).join('')}
+      <div class="sheet-actions"><button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button></div>`,
+  });
+  s.body.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-d]');
+    if (!b) return;
+    const st = b.closest('[data-t]');
+    const input = $('input', st);
+    const v = Math.max(0, Math.min(14, (parseInt(input.value, 10) || 0) + Number(b.dataset.d)));
+    input.value = v;
+    haptic(5);
+  });
+  $('[data-save]', s.body).addEventListener('click', async () => {
+    CATEGORIES.forEach((c) => {
+      const v = parseInt($(`[data-t="${c.id}"] input`, s.body).value, 10);
+      plan.targets[c.id] = Number.isFinite(v) ? Math.max(0, Math.min(14, v)) : plan.targets[c.id];
+    });
+    await savePlan(plan);
+    s.close();
+    render();
+    toast('Limiti aggiornati');
+  });
+}
+
+function editPlanText(key) {
+  const plan = getPlan();
+  const s = openSheet({
+    title: key === 'rules' ? 'Regole' : 'Porzioni carbo',
+    html: `
+      <label class="field">
+        <span class="field-label">Una voce per riga</span>
+        <textarea class="input" data-text rows="10" style="min-height:220px">${esc(plan[key])}</textarea>
+      </label>
+      <div class="sheet-actions"><button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button></div>`,
+  });
+  $('[data-save]', s.body).addEventListener('click', async () => {
+    plan[key] = $('[data-text]', s.body).value;
+    await savePlan(plan);
+    s.close();
+    toast('Salvato');
+  });
+}
+
+/* --- Vecchio diario (calorie e macro), in sola lettura ------------------- */
+
+async function openLegacyDiary() {
   const all = await db.getAll('meals');
-
-  // Raggruppa per giorno
   const byDay = new Map();
   for (const m of all) {
     if (!byDay.has(m.date)) byDay.set(m.date, []);
     byDay.get(m.date).push(m);
   }
   const days = [...byDay.keys()].sort().reverse();
-
-  let html;
-  if (days.length === 0) {
-    html = emptyState({
-      iconName: 'calendar-days', compact: true,
-      title: 'Storico vuoto',
-      text: 'I giorni in cui registri dei pasti compariranno qui.',
-    });
-  } else {
-    // Media delle calorie negli ultimi 7 giorni con dati
-    const weekAgo = addDays(todayISO(), -6);
-    const recent = days.filter((d) => d >= weekAgo);
-    const avg = recent.length
-      ? recent.reduce((s, d) => s + totals(byDay.get(d)).kcal, 0) / recent.length
-      : 0;
-
-    html = `
-      <div class="card" style="margin-bottom:var(--s-4)">
-        <div class="field-label" style="margin-bottom:var(--s-1)">Media ultimi 7 giorni</div>
-        <div class="kcal-hero"><span class="big num" style="font-size:36px">${fmtInt(avg)}</span><span class="unit">kcal / giorno</span></div>
-        <div class="kcal-sub">Calcolata sui ${recent.length} ${recent.length === 1 ? 'giorno registrato' : 'giorni registrati'}</div>
+  const html = days.map((d) => {
+    const items = byDay.get(d);
+    const kcal = items.reduce((s, m) => s + (m.kcal || 0), 0);
+    return `
+      <div class="field-label" style="margin-top:var(--s-4);display:flex;justify-content:space-between">
+        <span style="text-transform:capitalize">${esc(formatDay(d))}</span><span class="num">${kcal ? `${fmtInt(kcal)} kcal` : ''}</span>
       </div>
-      <div class="list">
-        ${days.map((d) => {
-          const t = totals(byDay.get(d));
-          const n = byDay.get(d).length;
-          return `
-            <button class="list-row" data-day="${d}">
-              <span class="row-main">
-                <span class="row-title" style="text-transform:capitalize">${esc(formatDay(d))}</span>
-                <span class="row-sub num">${n} ${n === 1 ? 'voce' : 'voci'} · P ${fmtInt(t.protein)} · C ${fmtInt(t.carbs)} · G ${fmtInt(t.fat)} g</span>
-              </span>
-              <span class="row-trail num">${fmtInt(t.kcal)} kcal ${icon('chevron-right')}</span>
-            </button>`;
-        }).join('')}
-      </div>`;
-  }
+      <div class="list">${items.map((m) => {
+        const parts = [];
+        if (m.kcal) parts.push(`${fmtInt(m.kcal)} kcal`);
+        if (m.protein) parts.push(`P ${fmtNum(m.protein)} g`);
+        if (m.carbs) parts.push(`C ${fmtNum(m.carbs)} g`);
+        if (m.fat) parts.push(`G ${fmtNum(m.fat)} g`);
+        return `
+          <div class="list-row">
+            <span class="row-main"><span class="row-title" style="white-space:normal">${esc(m.description)}</span>
+            ${parts.length ? `<span class="row-sub num">${parts.join(' · ')}</span>` : ''}</span>
+          </div>`;
+      }).join('')}</div>`;
+  }).join('');
 
-  const s = openSheet({ title: 'Storico pasti', tall: true, html });
-  s.body.addEventListener('click', async (e) => {
-    const row = e.target.closest('[data-day]');
-    if (!row) return;
-    state.date = row.dataset.day;
-    s.close();
-    await loadDay();
-    render();
+  openSheet({
+    title: 'Diario precedente',
+    tall: true,
+    html: `<p class="footnote" style="margin-top:0">Le voci registrate prima del piano settimanale, conservate in sola lettura (sono incluse anche nel backup).</p>${html}`,
   });
 }

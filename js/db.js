@@ -8,17 +8,19 @@
    - meals     : pasti                    { id, date, type, description, kcal, protein, carbs, fat, createdAt }
    - templates : schede di allenamento    { id, code, name, kind, order, notes, exercises: [...] }
                  exercises[i] = { exerciseId, name, sets, repMin, repMax, unit }  (unit: '' | 'g' | 'b')
-   - meta      : impostazioni varie       { key, value }
+   - water     : acqua bevuta per giorno  { date, ml }
+   - dietDays  : pasti del piano per giorno { date, meals: { colazione, spuntino, pranzo, cena } }
+   - meta      : impostazioni varie       { key, value }  (es. "dietPlan" = piano alimentare)
    Gli allenamenti possono avere anche: status ('active' = in corso), kind ('cardio'),
    templateId/templateCode e, per ogni esercizio, target { sets, repMin, repMax, unit }.
    Le date sono stringhe locali "AAAA-MM-GG": si ordinano e confrontano come testo.
    ========================================================================== */
 
 const DB_NAME = 'fit-tracker';
-// Versione 2: aggiunto l'archivio "templates". L'aggiornamento crea solo gli archivi
-// mancanti, quindi i dati già salvati restano intatti.
-const DB_VERSION = 2;
-const STORES = ['exercises', 'workouts', 'meals', 'templates', 'meta'];
+// Versione 2: aggiunto l'archivio "templates". Versione 3: "water" e "dietDays".
+// L'aggiornamento crea solo gli archivi mancanti, quindi i dati già salvati restano intatti.
+const DB_VERSION = 3;
+const STORES = ['exercises', 'workouts', 'meals', 'templates', 'water', 'dietDays', 'meta'];
 
 let dbPromise = null;
 
@@ -47,6 +49,12 @@ export function openDB() {
       }
       if (!db.objectStoreNames.contains('templates')) {
         db.createObjectStore('templates', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('water')) {
+        db.createObjectStore('water', { keyPath: 'date' });
+      }
+      if (!db.objectStoreNames.contains('dietDays')) {
+        db.createObjectStore('dietDays', { keyPath: 'date' });
       }
     };
     req.onsuccess = () => {
@@ -160,21 +168,24 @@ export async function isPersisted() {
 /* --- Backup: esportazione e importazione JSON --------------------------- */
 
 const BACKUP_APP = 'fit-tracker';
-const BACKUP_VERSION = 2; // la versione 2 include anche le schede
+const BACKUP_VERSION = 3; // v2: + schede · v3: + acqua, piano e diario della dieta
 
 /** Crea l'oggetto di backup con tutti i dati. */
 export async function exportData() {
-  const [exercises, workouts, meals, templates] = await Promise.all([
+  const [exercises, workouts, meals, templates, water, dietDays, dietPlan] = await Promise.all([
     getAll('exercises'),
     getAll('workouts'),
     getAll('meals'),
     getAll('templates'),
+    getAll('water'),
+    getAll('dietDays'),
+    getMeta('dietPlan'),
   ]);
   return {
     app: BACKUP_APP,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    data: { exercises, workouts, meals, templates },
+    data: { exercises, workouts, meals, templates, water, dietDays, dietPlan },
   };
 }
 
@@ -186,25 +197,31 @@ export async function importData(backup) {
   if (!backup || backup.app !== BACKUP_APP || typeof backup.data !== 'object') {
     throw new Error('Il file non è un backup di Fit Tracker.');
   }
-  const { exercises = [], workouts = [], meals = [], templates } = backup.data;
-  if (![exercises, workouts, meals].every(Array.isArray) || (templates && !Array.isArray(templates))) {
+  const { exercises = [], workouts = [], meals = [], templates, water, dietDays, dietPlan } = backup.data;
+  const optional = [templates, water, dietDays].filter((x) => x !== undefined);
+  if (![exercises, workouts, meals, ...optional].every(Array.isArray)) {
     throw new Error('Il backup è danneggiato.');
   }
-  const valid = (arr) => arr.every((x) => x && typeof x.id === 'string');
-  if (!valid(exercises) || !valid(workouts) || !valid(meals) || (templates && !valid(templates))) {
+  const valid = (arr, key = 'id') => arr.every((x) => x && typeof x[key] === 'string');
+  if (!valid(exercises) || !valid(workouts) || !valid(meals) || (templates && !valid(templates))
+      || (water && !valid(water, 'date')) || (dietDays && !valid(dietDays, 'date'))) {
     throw new Error('Il backup contiene elementi non validi.');
   }
 
   // Un'unica transazione: o si importa tutto, o non cambia nulla.
-  // I backup della versione 1 non hanno le schede: in quel caso restano quelle attuali.
+  // I backup più vecchi non hanno schede, acqua o dieta: in quel caso restano quelli attuali.
   const lists = { exercises, workouts, meals };
   if (templates && templates.length) lists.templates = templates;
-  await tx(Object.keys(lists), 'readwrite', (t) => {
+  if (water) lists.water = water;
+  if (dietDays) lists.dietDays = dietDays;
+  const stores = [...Object.keys(lists), ...(dietPlan ? ['meta'] : [])];
+  await tx(stores, 'readwrite', (t) => {
     for (const name of Object.keys(lists)) {
       const s = t.objectStore(name);
       s.clear();
       lists[name].forEach((item) => s.put(item));
     }
+    if (dietPlan) t.objectStore('meta').put({ key: 'dietPlan', value: dietPlan });
   });
   return { exercises: exercises.length, workouts: workouts.length, meals: meals.length };
 }
