@@ -12,7 +12,8 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
   con pesi dell'ultima volta e ripetizioni obiettivo, suggerimento "Aumenta il peso", timer di recupero,
   salvataggio a ogni serie (l'allenamento in corso si ritrova riaprendo l'app), "Termina allenamento",
   allenamento libero (corsa, nuoto, camminata, bici, altro), libreria esercizi, storico modificabile.
-- **Dieta**: piano settimanale modificabile, categorie di pranzo e cena con contatori e avvisi,
+- **Dieta**: piano settimanale modificabile, opzioni di colazione e spuntino (modificabili),
+  categorie di pranzo e cena con contatori e avvisi,
   sgarri, promemoria del carbo, settimane precedenti con riepilogo, regole e porzioni.
 - **Progressi**: allenamenti per settimana/mese, grafici di peso, ripetizioni e volume per esercizio,
   backup JSON (esporta / importa).

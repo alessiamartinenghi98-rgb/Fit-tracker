@@ -19,7 +19,7 @@ import {
   isActive, isStrength, isExtra, isCardio, isActivity, workoutLabel, activityType, workoutStats,
 } from './workouts.js';
 import { WATER_GOAL, WATER_STEP, setWater, liters } from './water.js';
-import { dayStatus, SLOTS, categoryLabel, isCheatMeal } from './plan.js';
+import { dayStatus, SLOTS, mealLabel, isCheatMeal } from './plan.js';
 
 const WEEKLY_GOAL = 4;
 
@@ -321,10 +321,7 @@ function dayDetail(date) {
   const meals = SLOTS.map((slot) => {
     const m = day?.meals?.[slot.id];
     if (!m) return '';
-    const parts = [];
-    if (m.category) parts.push(categoryLabel(m.category));
-    if (m.carbo) parts.push('+ carbo');
-    const what = parts.join(' ') || 'Come da piano';
+    const what = mealLabel(m);
     return `
       <div class="list-row">
         <span class="row-icon">${icon(slot.icon)}</span>

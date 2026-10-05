@@ -19,6 +19,7 @@ import {
 import {
   CATEGORIES, SLOTS, WEEKDAYS, loadPlan, getPlan, savePlan, planForDate,
   dayStatus, carbCount, categoryCounts, weekDates, isCheatMeal, categoryLabel, counterLabel,
+  slotOptions, plannedOption, OTHER_OPTION,
 } from './plan.js';
 
 const state = {
@@ -243,8 +244,10 @@ function mealCard(slot, planned, logged, future) {
   if (logged) {
     const tags = [];
     if (logged.category) tags.push(`<span class="cat-chip solid">${esc(categoryLabel(logged.category))}</span>`);
+    if (logged.option) tags.push(`<span class="cat-chip solid wrap">${esc(logged.optionLabel || OTHER_OPTION.label)}</span>`);
     if (logged.carbo) tags.push('<span class="cat-chip carb">+ carbo</span>');
-    if (!logged.category && !logged.note) tags.push('<span class="cat-chip solid">Come da piano</span>');
+    // Pasti segnati prima delle opzioni: solo "Come da piano"
+    if (!logged.category && !logged.option && !logged.note) tags.push('<span class="cat-chip solid">Come da piano</span>');
     body = `
       <div class="meal-logged">
         ${tags.length ? `<div class="meal-tags">${tags.join('')}</div>` : ''}
@@ -297,9 +300,13 @@ async function quickLog(slotId) {
   const date = state.selected;
   const planned = planForDate(date)[slotId];
   const slot = SLOTS.find((s) => s.id === slotId);
-  const meal = slot.main
-    ? { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false, at: Date.now() }
-    : { note: '', cheat: false, at: Date.now() };
+  let meal;
+  if (slot.main) {
+    meal = { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false, at: Date.now() };
+  } else {
+    const opt = plannedOption(date, slotId);
+    meal = { note: '', cheat: false, at: Date.now(), ...(opt ? { option: opt.id, optionLabel: opt.label } : {}) };
+  }
   await saveMeal(date, slotId, meal);
   haptic(15);
   render();
@@ -331,11 +338,19 @@ function openMealSheet(slotId) {
   const slot = SLOTS.find((s) => s.id === slotId);
   const planned = planForDate(date)[slotId];
   const existing = state.days.get(date)?.meals?.[slotId] || null;
+  // Colazione e spuntino: opzione prevista dal piano preselezionata
+  const options = slot.main ? [] : slotOptions(slotId);
   const draft = existing
     ? { ...existing }
     : slot.main
       ? { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false }
-      : { note: '', cheat: false };
+      : { option: plannedOption(date, slotId)?.id || null, note: '', cheat: false };
+  // Pasto segnato prima delle opzioni ("come da piano"): si parte dall'opzione del piano
+  if (!slot.main && existing && !existing.option) draft.option = plannedOption(date, slotId)?.id || null;
+  // Opzione non più presente nel piano: resta visibile per non perderla
+  if (!slot.main && draft.option && !options.some((o) => o.id === draft.option)) {
+    options.splice(options.length - 1, 0, { id: draft.option, label: draft.optionLabel || 'Opzione eliminata' });
+  }
 
   const switchRow = (key, label, sub, cls = '') => `
     <label class="switch-row ${cls}">
@@ -355,11 +370,17 @@ function openMealSheet(slotId) {
           <div class="chips" data-cats>
             ${CATEGORIES.map((c) => `<button class="chip ${draft.category === c.id ? 'active' : ''}" data-cat="${c.id}">${esc(c.label)}</button>`).join('')}
           </div>
-        </div>` : ''}
+        </div>` : `
+        <div class="field">
+          <span class="field-label">Cosa hai mangiato</span>
+          <div class="chips stack" data-options>
+            ${options.map((o) => `<button class="chip ${draft.option === o.id ? 'active' : ''}" data-opt="${esc(o.id)}">${esc(o.label)}</button>`).join('')}
+          </div>
+        </div>`}
       <label class="field">
         <span class="field-label">Note <span class="opt">· facoltative</span></span>
         <textarea class="input" data-note rows="2" maxlength="300"
-                  placeholder="${slot.main ? 'Es. pollo alla piastra, finocchi, riso' : 'Lascia vuoto se come da piano'}">${esc(draft.note || '')}</textarea>
+                  placeholder="${slot.main ? 'Es. pollo alla piastra, finocchi, riso' : 'Es. con mirtilli invece dei lamponi'}">${esc(draft.note || '')}</textarea>
       </label>
       <div class="list switch-list">
         ${slot.main ? switchRow('carbo', '+ carbo', 'Una sola porzione al giorno') : ''}
@@ -383,6 +404,15 @@ function openMealSheet(slotId) {
   };
   syncCheat();
 
+  $('[data-options]', body)?.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-opt]');
+    if (!chip) return;
+    draft.option = chip.dataset.opt;
+    body.querySelectorAll('[data-opt]').forEach((c) => c.classList.toggle('active', c === chip));
+    haptic(5);
+    if (draft.option === OTHER_OPTION.id) $('[data-note]', body).focus();
+  });
+
   $('[data-cats]', body)?.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-cat]');
     if (!chip) return;
@@ -394,8 +424,12 @@ function openMealSheet(slotId) {
 
   $('[data-save]', body).addEventListener('click', async () => {
     if (slot.main && !draft.category) return toast('Scegli la categoria', { error: true });
+    if (!slot.main && !draft.option) return toast('Scegli cosa hai mangiato', { error: true });
+    const chosen = options.find((o) => o.id === draft.option);
     const meal = {
-      ...(slot.main ? { category: draft.category, carbo: $('[data-k="carbo"]', body).checked } : {}),
+      ...(slot.main
+        ? { category: draft.category, carbo: $('[data-k="carbo"]', body).checked }
+        : { option: draft.option, optionLabel: chosen ? chosen.label : OTHER_OPTION.label }),
       note: $('[data-note]', body).value.trim(),
       cheat: draft.category === 'libero' ? false : cheatInput.checked,
       at: existing?.at || Date.now(),
@@ -462,6 +496,16 @@ function openPlanEditor() {
       <div class="list" data-rows>${rows()}</div>
       <div class="field-label" style="margin-top:var(--s-5)">Altro</div>
       <div class="list">
+        <button class="list-row" data-edit="opt-colazione">
+          <span class="row-icon">${icon('coffee')}</span>
+          <span class="row-main"><span class="row-title">Opzioni colazione</span><span class="row-sub">${getPlan().options.colazione.length} opzioni + Altro</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>
+        <button class="list-row" data-edit="opt-spuntino">
+          <span class="row-icon">${icon('apple')}</span>
+          <span class="row-main"><span class="row-title">Opzioni spuntino</span><span class="row-sub">${getPlan().options.spuntino.length} opzioni + Altro</span></span>
+          <span class="row-trail">${icon('chevron-right')}</span>
+        </button>
         <button class="list-row" data-edit="targets">
           <span class="row-icon">${icon('chart-no-axes-column')}</span>
           <span class="row-main"><span class="row-title">Limiti settimanali</span><span class="row-sub">Quante volte per categoria</span></span>
@@ -488,6 +532,7 @@ function openPlanEditor() {
     if (day) return editPlanDay(Number(day.dataset.dayI), refresh);
     const what = e.target.closest('[data-edit]')?.dataset.edit;
     if (what === 'targets') return editTargets();
+    if (what === 'opt-colazione' || what === 'opt-spuntino') return editOptions(what.slice(4));
     if (what) return editPlanText(what);
   });
 }
@@ -495,6 +540,19 @@ function openPlanEditor() {
 function editPlanDay(i, onDone) {
   const plan = getPlan();
   const d = structuredClone(plan.days[i]);
+
+  // Colazione e spuntino: opzione prevista (preselezionata) e testo del suggerimento
+  d.options = d.options || {};
+  const optionBlock = (slotId, label) => `
+    <div class="field">
+      <span class="field-label">${label}</span>
+      <div class="chips stack" data-opts="${slotId}" style="margin-bottom:var(--s-2)">
+        ${slotOptions(slotId).filter((o) => o.id !== OTHER_OPTION.id).map((o) => `
+          <button class="chip ${d.options[slotId] === o.id ? 'active' : ''}" data-opt="${esc(o.id)}">${esc(o.label)}</button>`).join('')}
+      </div>
+      <span class="field-label" style="margin-top:var(--s-3)">Testo del suggerimento</span>
+      <textarea class="input" data-text="${slotId}" rows="2">${esc(d[slotId])}</textarea>
+    </div>`;
 
   const mainBlock = (slotId, label) => `
     <div class="field">
@@ -513,16 +571,21 @@ function editPlanDay(i, onDone) {
     title: WEEKDAYS[i],
     tall: true,
     html: `
-      <label class="field"><span class="field-label">Colazione</span>
-        <textarea class="input" data-text="colazione" rows="2">${esc(d.colazione)}</textarea></label>
-      <label class="field"><span class="field-label">Spuntino</span>
-        <textarea class="input" data-text="spuntino" rows="2">${esc(d.spuntino)}</textarea></label>
+      ${optionBlock('colazione', 'Colazione')}
+      ${optionBlock('spuntino', 'Spuntino')}
       ${mainBlock('pranzo', 'Pranzo')}
       ${mainBlock('cena', 'Cena')}
       <div class="sheet-actions"><button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button></div>`,
   });
 
   s.body.addEventListener('click', (e) => {
+    const opt = e.target.closest('[data-opt]');
+    if (opt) {
+      const group = opt.closest('[data-opts]');
+      d.options[group.dataset.opts] = opt.dataset.opt;
+      group.querySelectorAll('[data-opt]').forEach((c) => c.classList.toggle('active', c === opt));
+      return;
+    }
     const chip = e.target.closest('[data-cat]');
     if (!chip) return;
     const group = chip.closest('[data-cats]');
@@ -542,6 +605,59 @@ function editPlanDay(i, onDone) {
     s.close();
     onDone();
     toast('Piano aggiornato');
+  });
+}
+
+/** Modifica dell'elenco di opzioni di colazione o spuntino ("Altro" resta sempre). */
+function editOptions(slotId) {
+  const plan = getPlan();
+  const list = structuredClone(plan.options[slotId]);
+  const label = slotId === 'colazione' ? 'colazione' : 'spuntino';
+
+  const rowsHTML = () => list.map((o, i) => `
+    <div class="option-row">
+      <input class="input" data-i="${i}" value="${esc(o.label)}" maxlength="80" autocomplete="off" enterkeyhint="done">
+      <button class="icon-btn" data-remove="${i}" aria-label="Togli opzione">${icon('trash-2')}</button>
+    </div>`).join('');
+
+  const s = openSheet({
+    title: `Opzioni ${label}`,
+    tall: true,
+    html: `
+      <div data-rows>${rowsHTML()}</div>
+      <button class="btn btn-ghost btn-block" data-add>${icon('plus')} Aggiungi opzione</button>
+      <p class="footnote">"Altro" è sempre disponibile in fondo alla lista. I pasti già segnati mantengono il testo che avevano.</p>
+      <div class="sheet-actions"><button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button></div>`,
+  });
+
+  const readInputs = () => {
+    s.body.querySelectorAll('[data-i]').forEach((input) => { list[Number(input.dataset.i)].label = input.value; });
+  };
+  const redraw = () => { $('[data-rows]', s.body).innerHTML = rowsHTML(); };
+
+  s.body.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-remove]');
+    if (rm) { readInputs(); list.splice(Number(rm.dataset.remove), 1); redraw(); return; }
+    if (e.target.closest('[data-add]')) {
+      readInputs();
+      list.push({ id: db.uid(), label: '' });
+      redraw();
+      const inputs = s.body.querySelectorAll('[data-i]');
+      inputs[inputs.length - 1]?.focus();
+    }
+  });
+
+  $('[data-save]', s.body).addEventListener('click', async () => {
+    readInputs();
+    const clean = list.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label);
+    plan.options[slotId] = clean;
+    // I giorni che prevedevano un'opzione tolta passano alla prima disponibile
+    plan.days.forEach((d) => {
+      if (d.options && !clean.some((o) => o.id === d.options[slotId])) d.options[slotId] = clean[0]?.id || null;
+    });
+    await savePlan(plan);
+    s.close();
+    toast('Opzioni aggiornate');
   });
 }
 
