@@ -12,6 +12,7 @@ import {
   todayISO, addDays, startOfWeek, parseISO, formatShortDate, fmtInt, fmtNum,
 } from './ui.js';
 import { completedSets, entryVolume, byNewest } from './workouts.js';
+import { hasTreadmill } from './treadmill.js';
 
 /* Colori dei grafici, allineati ai token del CSS */
 const C = {
@@ -89,6 +90,35 @@ async function load() {
     .filter((w) => w.status !== 'active' && w.kind !== 'cardio' && w.kind !== 'activity' && (w.exercises || []).length > 0)
     .sort(byNewest);
   state.exercises = exercises;
+  // Tapis roulant: da tutti gli allenamenti terminati (schede, libero, cardio)
+  state.treadmills = workouts.filter((w) => w.status !== 'active' && hasTreadmill(w));
+}
+
+/** Minuti di tapis roulant tra due date (incluse). */
+function treadmillMinutesBetween(from, to) {
+  return (state.treadmills || [])
+    .filter((w) => w.date >= from && w.date <= to)
+    .reduce((sum, w) => sum + (w.treadmill.minutes || 0), 0);
+}
+
+function treadmillSection() {
+  const today = todayISO();
+  const week = treadmillMinutesBetween(startOfWeek(today), today);
+  const month = treadmillMinutesBetween(monthStart(today), today);
+  const sessions = (state.treadmills || []).filter((w) => w.date >= monthStart(today)).length;
+  return `
+    <div class="section-label"><span style="display:flex;align-items:center;gap:8px"><i class="tm-dot big"></i>Tapis roulant</span></div>
+    <div class="kpi-grid">
+      <div class="card kpi">
+        <div class="kpi-label">Questa settimana</div>
+        <div class="kpi-value num">${week}<span class="kpi-unit">min</span></div>
+      </div>
+      <div class="card kpi">
+        <div class="kpi-label">Questo mese</div>
+        <div class="kpi-value num">${month}<span class="kpi-unit">min</span></div>
+        <div class="kpi-delta">${sessions} ${sessions === 1 ? 'sessione' : 'sessioni'}</div>
+      </div>
+    </div>`;
 }
 
 /** Numero di allenamenti tra due date (incluse). */
@@ -164,6 +194,7 @@ export async function renderProgress() {
   } else {
     html += activitySection() + exerciseSection();
   }
+  html += treadmillSection();
   html += await backupSection();
   root.innerHTML = html;
 
