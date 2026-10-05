@@ -238,7 +238,7 @@ const MEALS_PER_DAY = 4;
 /**
  * Avanzamento dei tre anelli di un giorno (valori da 0 a 1):
  * - acqua: litri bevuti su 2
- * - dieta: pasti segnati su 4; con uno sgarro l'anello resta incompleto
+ * - dieta: pieno solo se la giornata è tutta pulita (4 pasti, nessuno sgarro), altrimenti vuoto
  * - allenamento: pieno se completo (o cardio / allenamento libero), metà se parziale
  */
 function dayProgress(date) {
@@ -246,8 +246,7 @@ function dayProgress(date) {
   const day = data.diet.get(date);
   const meals = Object.values(day?.meals || {}).filter(Boolean).length;
   const cheat = dayStatus(day) === 'cheat';
-  let diet = Math.min(1, meals / MEALS_PER_DAY);
-  if (cheat) diet = Math.min(diet, 0.75);
+  const diet = meals >= MEALS_PER_DAY && !cheat ? 1 : 0;
   const ws = workoutsOf(date);
   const full = ws.some((w) => (isStrength(w) && !isPartial(w)) || isExtra(w));
   const partialW = ws.find((w) => isStrength(w) && isPartial(w));
@@ -294,8 +293,8 @@ function ringsCardInner(p, from = null) {
       </div>
       <div class="rl-row">
         <span class="rl-mark diet"></span>
-        <span class="rl-text"><span class="rl-label">Pasti</span>
-        <span class="rl-value num">${p.meals}<small> / ${MEALS_PER_DAY}${p.cheat ? ' · sgarro' : ''}</small></span></span>
+        <span class="rl-text"><span class="rl-label">Dieta</span>
+        <span class="rl-value">${p.cheat ? 'Sgarro' : p.diet >= 1 ? 'Pulita' : 'In corso'}</span></span>
       </div>
       <div class="rl-row">
         <span class="rl-mark gym"></span>
@@ -314,7 +313,7 @@ function ringsCardInner(p, from = null) {
 function dayGoals(date) {
   return {
     water: waterOf(date) >= WATER_GOAL,
-    diet: dayStatus(data.diet.get(date)) === 'clean',
+    diet: dayProgress(date).diet >= 1, // giornata tutta pulita: 4 pasti senza sgarri
     gym: workoutsOf(date).some((w) => isStrength(w) || isExtra(w)),
   };
 }
@@ -349,7 +348,7 @@ function calendarInner() {
     <div class="cal-grid">${cells}</div>
     <div class="cal-legend">
       <span><i class="rl-mark water"></i>Acqua 2 L</span>
-      <span><i class="rl-mark diet"></i>Pasti 4/4</span>
+      <span><i class="rl-mark diet"></i>Giornata pulita</span>
       <span><i class="rl-mark gym"></i>Allenamento</span>
       <span><i class="tm-dot"></i>Tapis roulant</span>
     </div>`;

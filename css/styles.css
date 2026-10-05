@@ -3778,3 +3778,8 @@ input[type="date"]::-webkit-date-and-time-value {
 #recap-wrap + .card {
   margin-top: var(--s-3);
 }
+
+/* Elementi nascosti (es. categorie quando il pasto è uno sgarro) */
+[hidden] {
+  display: none !important;
+}
