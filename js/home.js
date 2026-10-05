@@ -95,6 +95,8 @@ export async function renderHome() {
   const active = data.workouts.find(isActive);
 
   $('#home-content').innerHTML = `
+    <div class="card rings-card" id="rings-card">${ringsCardInner(dayProgress(today))}</div>
+
     ${active ? activeBanner(active) : ''}
 
     <div class="card summary-card">
@@ -187,6 +189,79 @@ function shiftMonth(delta) {
   $('#cal-card').innerHTML = calendarInner();
 }
 
+/* --- Anelli di progresso ------------------------------------------------- */
+
+const MEALS_PER_DAY = 4;
+
+/**
+ * Avanzamento dei tre anelli di un giorno (valori da 0 a 1):
+ * - acqua: litri bevuti su 2
+ * - dieta: pasti segnati su 4; con uno sgarro l'anello resta incompleto
+ * - allenamento: pieno se completo (o cardio / allenamento libero), metà se parziale
+ */
+function dayProgress(date) {
+  const ml = waterOf(date);
+  const day = data.diet.get(date);
+  const meals = Object.values(day?.meals || {}).filter(Boolean).length;
+  const cheat = dayStatus(day) === 'cheat';
+  let diet = Math.min(1, meals / MEALS_PER_DAY);
+  if (cheat) diet = Math.min(diet, 0.75);
+  const ws = workoutsOf(date);
+  const full = ws.some((w) => (isStrength(w) && !isPartial(w)) || isExtra(w));
+  const partialW = ws.find((w) => isStrength(w) && isPartial(w));
+  return {
+    water: Math.min(1, ml / WATER_GOAL),
+    diet,
+    gym: full ? 1 : partialW ? 0.5 : 0,
+    ml, meals, cheat, full, partialW,
+  };
+}
+
+/**
+ * Tre anelli concentrici (esterno acqua, centrale dieta, interno allenamento).
+ * from: avanzamento precedente, per animare il riempimento da lì.
+ */
+function ringsSVG(p, { size, stroke, gap, animate = false, from = null }) {
+  const c = size / 2;
+  const rings = ['water', 'diet', 'gym'].map((key, i) => {
+    const r = c - stroke / 2 - i * (stroke + gap);
+    const len = 2 * Math.PI * r;
+    const value = p[key];
+    const offset = len * (1 - value);
+    const start = from ? len * (1 - from[key]) : len;
+    return `
+      <circle class="ring-track ${key}" cx="${c}" cy="${c}" r="${r.toFixed(2)}" stroke-width="${stroke}"/>
+      <circle class="ring-fill ${key} ${value <= 0 ? 'zero' : ''} ${animate ? 'animate' : ''}" cx="${c}" cy="${c}" r="${r.toFixed(2)}"
+              stroke-width="${stroke}"
+              style="stroke-dasharray:${len.toFixed(2)};stroke-dashoffset:${offset.toFixed(2)};--from:${start.toFixed(2)}"/>`;
+  }).join('');
+  return `<svg class="rings" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">${rings}</svg>`;
+}
+
+/** Card in cima: anelli grandi di oggi e legenda con i valori. */
+function ringsCardInner(p, from = null) {
+  const gymText = p.full ? 'Completo' : p.partialW ? `Parziale ${partialText(p.partialW)}` : 'Da fare';
+  return `
+    <div class="rings-big">${ringsSVG(p, { size: 132, stroke: 14, gap: 3, animate: true, from })}</div>
+    <div class="rings-legend">
+      <div class="rl-row">
+        <span class="rl-mark water"></span>
+        <span class="rl-text"><span class="rl-label">Acqua</span>
+        <span class="rl-value num">${liters(p.ml)}<small> / ${liters(WATER_GOAL)} L</small></span></span>
+      </div>
+      <div class="rl-row">
+        <span class="rl-mark diet"></span>
+        <span class="rl-text"><span class="rl-label">Pasti</span>
+        <span class="rl-value num">${p.meals}<small> / ${MEALS_PER_DAY}${p.cheat ? ' · sgarro' : ''}</small></span></span>
+      </div>
+      <div class="rl-row">
+        <span class="rl-mark gym"></span>
+        <span class="rl-text"><span class="rl-label">Allenamento</span>
+        <span class="rl-value">${esc(gymText)}</span></span>
+      </div>
+    </div>`;
+}
+
 /** Stato dei tre obiettivi di un giorno. */
 function dayGoals(date) {
   return {
@@ -209,14 +284,11 @@ function calendarInner() {
   for (let day = 1; day <= daysInMonth; day++) {
     const date = `${calMonth}-${String(day).padStart(2, '0')}`;
     const future = date > today;
-    const g = future ? null : dayGoals(date);
     cells += `
       <button class="cal-day ${date === today ? 'today' : ''} ${future ? 'future' : ''}" data-day="${date}" ${future ? 'disabled' : ''}
               aria-label="${esc(formatFullDate(date))}">
         <span class="cal-num num">${day}</span>
-        <span class="cal-dots">${g ? `
-          <i class="dot water ${g.water ? 'on' : ''}"></i><i class="dot diet ${g.diet ? 'on' : ''}"></i><i class="dot gym ${g.gym ? 'on' : ''}"></i>` : ''}
-        </span>
+        <span class="cal-rings">${future ? '' : ringsSVG(dayProgress(date), { size: 30, stroke: 3.5, gap: 1 })}</span>
       </button>`;
   }
 
@@ -228,26 +300,32 @@ function calendarInner() {
     </div>
     <div class="cal-grid">${cells}</div>
     <div class="cal-legend">
-      <span><i class="dot water on"></i>Acqua 2 L</span>
-      <span><i class="dot diet on"></i>Giornata pulita</span>
-      <span><i class="dot gym on"></i>Allenamento</span>
+      <span><i class="rl-mark water"></i>Acqua 2 L</span>
+      <span><i class="rl-mark diet"></i>Pasti 4/4</span>
+      <span><i class="rl-mark gym"></i>Allenamento</span>
     </div>`;
 }
 
 /* --- Acqua --------------------------------------------------------------- */
 
 async function changeWater(date, delta) {
+  const before = dayProgress(date);
   const ml = await setWater(date, waterOf(date) + delta, { notify: false });
   data.water.set(date, ml);
   haptic(delta > 0 ? 10 : 5);
-  refreshWater(date);
+  refreshWater(date, before);
 }
 
-/** Aggiorna solo la card dell'acqua e il calendario (senza ridisegnare tutta la pagina). */
-function refreshWater(date) {
+/**
+ * Aggiorna solo acqua, anelli di oggi e calendario (senza ridisegnare tutta la pagina).
+ * before: anelli prima della modifica, così il riempimento parte da lì.
+ */
+function refreshWater(date, before = null) {
   if (date === todayISO()) {
     const card = $('#water-card');
     if (card) card.innerHTML = waterCardInner(waterOf(date));
+    const rings = $('#rings-card');
+    if (rings) rings.innerHTML = ringsCardInner(dayProgress(date), before || dayProgress(date));
   }
   const cal = $('#cal-card');
   if (cal) cal.innerHTML = calendarInner();
@@ -278,10 +356,11 @@ function editWater(date) {
     if (b) input.value = b.dataset.v;
   });
   $('[data-save]', s.body).addEventListener('click', async () => {
+    const before = dayProgress(date);
     const ml = await setWater(date, parseNum(input.value) || 0, { notify: false });
     data.water.set(date, ml);
     s.close();
-    refreshWater(date);
+    refreshWater(date, before);
   });
 }
 
@@ -294,11 +373,12 @@ function openDaySheet(date) {
   s.body.addEventListener('click', async (e) => {
     const w = e.target.closest('[data-dwater]');
     if (w) {
+      const before = dayProgress(date);
       const ml = await setWater(date, waterOf(date) + Number(w.dataset.dwater), { notify: false });
       data.water.set(date, ml);
       haptic(5);
       s.body.innerHTML = dayDetail(date);
-      refreshWater(date);
+      refreshWater(date, before);
       return;
     }
     if (e.target.closest('[data-open-diet]')) {

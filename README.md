@@ -5,9 +5,9 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
 
 ## Funzioni
 
-- **Home**: riepilogo (allenamenti 2/4 e del mese, giorni puliti e sgarri), contatore acqua (2 L),
-  schede della settimana con allenamenti extra, calendario del mese con puntini acqua/dieta/allenamento
-  e dettaglio della giornata.
+- **Home**: anelli di oggi (acqua, pasti, allenamento), riepilogo (allenamenti 2/4 e del mese,
+  giorni puliti e sgarri), contatore acqua (2 L), schede della settimana con allenamenti extra,
+  calendario del mese con tre anelli per giorno e dettaglio della giornata.
 - **Allenamenti**: schede preimpostate e modificabili (A, B, C, D, cardio), apertura già compilata
   con pesi dell'ultima volta e ripetizioni obiettivo, suggerimento "Aumenta il peso", timer di recupero,
   salvataggio a ogni serie (l'allenamento in corso si ritrova riaprendo l'app), "Termina allenamento"

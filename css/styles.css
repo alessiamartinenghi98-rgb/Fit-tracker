@@ -2642,6 +2642,121 @@ input[type="date"]::-webkit-date-and-time-value {
   color: var(--accent);
 }
 
+/* Anelli di progresso (stile anelli attività) */
+.rings {
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.rings circle {
+  fill: none;
+}
+
+.ring-track.water { stroke: var(--water); opacity: 0.22; }
+.ring-track.diet { stroke: var(--diet); opacity: 0.22; }
+.ring-track.gym { stroke: var(--accent); opacity: 0.22; }
+
+.ring-fill {
+  stroke-linecap: round;
+  transition: stroke-dashoffset 700ms var(--ease-out);
+}
+
+.ring-fill.water { stroke: var(--water); }
+.ring-fill.diet { stroke: var(--diet); }
+.ring-fill.gym { stroke: var(--accent); }
+
+.ring-fill.zero {
+  visibility: hidden;
+}
+
+/* Riempimento animato dal valore precedente (o da vuoto) */
+.ring-fill.animate {
+  animation: ring-fill 900ms var(--ease-out);
+}
+
+@keyframes ring-fill {
+  from { stroke-dashoffset: var(--from); }
+}
+
+/* Card in cima alla Home */
+.rings-card {
+  display: flex;
+  align-items: center;
+  gap: var(--s-5);
+}
+
+.rings-big {
+  flex-shrink: 0;
+}
+
+.rings-legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.rl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rl-mark {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 3px solid currentColor;
+  flex-shrink: 0;
+}
+
+.rl-mark.water { color: var(--water); }
+.rl-mark.diet { color: var(--diet); }
+.rl-mark.gym { color: var(--accent); }
+
+.rl-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rl-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.rl-value {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.rl-value small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Calendario: numero del giorno con i tre anelli sotto */
+.cal-day {
+  height: 66px;
+  gap: 4px;
+}
+
+.cal-rings {
+  display: flex;
+  height: 30px;
+}
+
+.cal-legend .rl-mark {
+  width: 10px;
+  height: 10px;
+  border-width: 2.5px;
+}
+
 .cal-dots {
   display: flex;
   gap: 3px;
