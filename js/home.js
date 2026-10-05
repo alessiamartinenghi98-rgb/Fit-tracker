@@ -17,6 +17,7 @@ import { strengthTemplates } from './templates.js';
 import {
   openStartSheet, resumeActive, startTemplate, activeBanner, suggestedTemplate,
   isActive, isStrength, isExtra, isCardio, isActivity, workoutLabel, activityType, workoutStats,
+  isPartial, partialText, templateStatusForWeek,
 } from './workouts.js';
 import { WATER_GOAL, WATER_STEP, setWater, liters } from './water.js';
 import { dayStatus, SLOTS, mealLabel, isCheatMeal } from './plan.js';
@@ -139,13 +140,15 @@ function waterCardInner(ml) {
 
 function weekCardInner(weekFrom, weekTo, active) {
   const week = data.workouts.filter((w) => !isActive(w) && w.date >= weekFrom && w.date <= weekTo);
-  const doneIds = new Set(week.filter(isStrength).map((w) => w.templateId).filter(Boolean));
+  // Piena se fatta, mezza piena se chiusa come parziale, vuota se mancante
+  const status = templateStatusForWeek(data.workouts, weekFrom);
 
   const circles = strengthTemplates().map((t) => {
-    const done = doneIds.has(t.id);
+    const st = status.get(t.id) || '';
     const running = active && active.templateId === t.id;
-    return `<button class="wk-circle ${done ? 'done' : ''} ${running ? 'running' : ''}" data-template="${t.id}"
-              aria-label="Scheda ${esc(t.code)} ${esc(t.name)}: ${done ? 'fatta' : 'da fare'}">${esc(t.code)}</button>`;
+    const label = st === 'done' ? 'fatta' : st === 'partial' ? 'fatta in parte' : 'da fare';
+    return `<button class="wk-circle ${st} ${running ? 'running' : ''}" data-template="${t.id}"
+              aria-label="Scheda ${esc(t.code)} ${esc(t.name)}: ${label}"><span>${esc(t.code)}</span></button>`;
   }).join('');
 
   // Extra: cardio e allenamenti liberi raggruppati per tipo, es. "+1 corsa"
@@ -334,7 +337,9 @@ function dayDetail(date) {
   }).join('');
 
   const workoutRows = workouts.map((w) => {
-    const sub = isActivity(w) ? (w.note || '') : isCardio(w) ? 'Cardio del sabato' : `${workoutStats(w).sets} serie`;
+    const sub = isActivity(w) ? (w.note || '')
+      : isCardio(w) ? 'Cardio del sabato'
+        : isPartial(w) ? `Parziale · ${partialText(w)} serie` : `${workoutStats(w).sets} serie`;
     return `
       <div class="list-row">
         <span class="row-icon accent">${icon(isActivity(w) ? activityType(w.activity).icon : isCardio(w) ? 'heart-pulse' : 'dumbbell')}</span>

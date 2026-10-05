@@ -271,7 +271,7 @@ function enableDragToDismiss(sheet, handle, backdrop, close) {
 /**
  * Chiede conferma con un foglio. Restituisce una Promise<boolean>.
  */
-export function confirmSheet({ title, message, confirmLabel = 'Conferma', danger = false }) {
+export function confirmSheet({ title, message, confirmLabel = 'Conferma', cancelLabel = 'Annulla', danger = false }) {
   return new Promise((resolve) => {
     let answered = false;
     const s = openSheet({
@@ -280,7 +280,7 @@ export function confirmSheet({ title, message, confirmLabel = 'Conferma', danger
         <p class="confirm-text">${esc(message)}</p>
         <div class="sheet-actions">
           <button class="btn btn-block ${danger ? 'btn-danger' : 'btn-primary'}" data-ok>${esc(confirmLabel)}</button>
-          <button class="btn btn-block btn-secondary" data-close>Annulla</button>
+          <button class="btn btn-block btn-secondary" data-close>${esc(cancelLabel)}</button>
         </div>`,
       onClose: () => { if (!answered) resolve(false); },
     });

@@ -10,7 +10,8 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
   e dettaglio della giornata.
 - **Allenamenti**: schede preimpostate e modificabili (A, B, C, D, cardio), apertura già compilata
   con pesi dell'ultima volta e ripetizioni obiettivo, suggerimento "Aumenta il peso", timer di recupero,
-  salvataggio a ogni serie (l'allenamento in corso si ritrova riaprendo l'app), "Termina allenamento",
+  salvataggio a ogni serie (l'allenamento in corso si ritrova riaprendo l'app), "Termina allenamento"
+  con chiusura come parziale (conta nell'obiettivo, mezza lettera nella Home, "Parziale 14/20"),
   allenamento libero (corsa, nuoto, camminata, bici, altro), libreria esercizi, storico modificabile.
 - **Dieta**: piano settimanale modificabile, opzioni di colazione e spuntino (modificabili),
   categorie di pranzo e cena con contatori e avvisi,
