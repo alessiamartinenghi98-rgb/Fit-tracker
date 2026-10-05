@@ -2500,6 +2500,49 @@ input[type="date"]::-webkit-date-and-time-value {
   color: var(--accent);
 }
 
+/* Scheda fatta in parte: cerchio e lettera mezzi pieni (metà inferiore lime).
+   La lettera usa lo stesso confine: scura sulla metà lime, lime sulla metà scura. */
+.wk-circle,
+.tpl-badge {
+  position: relative;
+}
+
+.wk-circle.partial {
+  border-color: var(--accent);
+  background: linear-gradient(0deg, var(--accent) 50%, transparent 50%);
+}
+
+.tpl-badge.partial {
+  background: linear-gradient(0deg, var(--accent) 50%, var(--surface-2) 50%);
+}
+
+.wk-circle.partial > span,
+.tpl-badge.partial > span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(0deg, var(--accent-ink) 50%, var(--accent) 50%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.status-pill.partial {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.wc-partial {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
 .wk-sep {
   width: 1px;
   height: 28px;

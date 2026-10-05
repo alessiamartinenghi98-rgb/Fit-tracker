@@ -101,13 +101,34 @@ export function getActiveWorkout() {
   return state.workouts.find(isActive) || null;
 }
 
-/** Id delle schede completate nella settimana corrente (lunedì-domenica). */
-export function templatesDoneThisWeek() {
-  const from = startOfWeek(todayISO());
+/** Allenamento chiuso come parziale (non tutte le serie previste fatte). */
+export const isPartial = (w) => Boolean(w.partial);
+
+/** "14/20" per un allenamento parziale: serie fatte sul totale previsto. */
+export function partialText(w) {
+  return `${workoutStats(w).sets}/${w.plannedSets || workoutStats(w).sets}`;
+}
+
+/**
+ * Stato delle schede nella settimana di una data: Map id → 'done' | 'partial'.
+ * Se una scheda è stata fatta sia completa sia parziale, vince "completa".
+ */
+export function templateStatusForWeek(workouts, refDate = todayISO()) {
+  const from = startOfWeek(refDate);
   const to = addDays(from, 6);
-  return new Set(state.workouts
-    .filter((w) => !isActive(w) && w.templateId && w.date >= from && w.date <= to)
-    .map((w) => w.templateId));
+  const status = new Map();
+  workouts
+    .filter((w) => isStrength(w) && w.templateId && w.date >= from && w.date <= to)
+    .forEach((w) => {
+      if (!isPartial(w)) status.set(w.templateId, 'done');
+      else if (!status.has(w.templateId)) status.set(w.templateId, 'partial');
+    });
+  return status;
+}
+
+/** Id delle schede fatte nella settimana corrente (complete o parziali). */
+export function templatesDoneThisWeek() {
+  return new Set(templateStatusForWeek(state.workouts).keys());
 }
 
 /** Prima scheda non ancora fatta questa settimana, nell'ordine A → D. */
@@ -169,18 +190,17 @@ function lastPerformance(exerciseId, current) {
 }
 
 /**
- * Regola di progressione: se l'ultima volta tutte le serie previste sono
- * state fatte al massimo delle ripetizioni (es. 8 su 6-8), è ora di aumentare.
+ * Regola di progressione: se l'ultima volta tutte le serie fatte erano al massimo
+ * delle ripetizioni (es. 8 su 6-8), è ora di aumentare. Contano solo le serie
+ * effettivamente fatte: in un allenamento parziale quelle saltate non pesano.
  */
 function shouldIncrease(entry, current) {
   const target = entry.target;
   if (!target || !target.repMax) return false;
   const last = lastPerformance(entry.exerciseId, current);
   if (!last) return false;
-  const lastTarget = last.entry.target || target;
-  const needed = lastTarget.sets || target.sets;
-  const top = lastTarget.repMax || target.repMax;
-  return last.sets.length >= needed && last.sets.every((s) => s.reps >= top);
+  const top = (last.entry.target || target).repMax || target.repMax;
+  return last.sets.length > 0 && last.sets.every((s) => s.reps >= top);
 }
 
 /* ==========================================================================
@@ -242,7 +262,7 @@ export async function refreshWorkouts() {
 function renderList() {
   const root = $('#workouts-content');
   const active = getActiveWorkout();
-  const done = templatesDoneThisWeek();
+  const weekStatus = templateStatusForWeek(state.workouts);
   const history = state.workouts.filter((w) => !isActive(w));
   let html = '';
 
@@ -256,7 +276,7 @@ function renderList() {
       <button class="btn-ghost link-btn" data-action="edit-templates">${icon('pencil')} Modifica</button>
     </div>
     <div class="tpl-grid fade-list">
-      ${strengthTemplates().map((t) => templateCard(t, done.has(t.id))).join('')}
+      ${strengthTemplates().map((t) => templateCard(t, weekStatus.get(t.id))).join('')}
     </div>`;
 
   const cardio = cardioTemplate();
@@ -327,14 +347,21 @@ export function activeBanner(w) {
     </button>`;
 }
 
-function templateCard(t, doneThisWeek) {
+/** Lettera della scheda: piena se fatta, mezza piena se parziale. */
+export function tplBadge(code, status, extra = '') {
+  return `<span class="tpl-badge ${status || ''} ${extra}"><span>${esc(code)}</span></span>`;
+}
+
+function templateCard(t, status) {
+  const doneThisWeek = status === 'done';
   const last = state.workouts.find((w) => !isActive(w) && w.templateId === t.id);
   const sub = last ? `Ultima ${formatShortDate(last.date)}` : 'Mai fatta';
   return `
     <button class="card card-tap tpl-card" data-template="${t.id}">
       <span class="tpl-top">
-        <span class="tpl-badge ${doneThisWeek ? 'done' : ''}">${esc(t.code)}</span>
+        ${tplBadge(t.code, status)}
         ${doneThisWeek ? `<span class="tpl-check">${icon('check')}</span>` : ''}
+        ${status === 'partial' ? '<span class="status-pill partial small">Parziale</span>' : ''}
       </span>
       <span class="tpl-name">${esc(t.name)}</span>
       <span class="tpl-sub">${t.exercises.length} esercizi · ${esc(sub)}</span>
@@ -356,9 +383,10 @@ function workoutCard(w) {
         <div class="wc-title">${w.templateCode ? `<span class="mini-badge">${esc(w.templateCode)}</span>` : ''}${esc(w.name || 'Allenamento')}</div>
         <div class="wc-date">${esc(formatDay(w.date))}</div>
       </div>
+      ${isPartial(w) ? `<div class="wc-partial"><span class="status-pill partial small">Parziale</span><span class="num">${partialText(w)} serie fatte</span></div>` : ''}
       <div class="wc-stats">
         <div class="stat-mini"><div class="v num">${st.exercises}</div><div class="l">Esercizi</div></div>
-        <div class="stat-mini"><div class="v num">${st.sets}</div><div class="l">Serie</div></div>
+        <div class="stat-mini"><div class="v num">${isPartial(w) ? partialText(w) : st.sets}</div><div class="l">Serie</div></div>
         <div class="stat-mini"><div class="v num">${fmtInt(st.volume)}<small>kg</small></div><div class="l">Volume</div></div>
       </div>
       ${entries.length ? `<div class="wc-ex">${shown}${more}</div>` : ''}
@@ -400,16 +428,17 @@ export function openStartSheet() {
   const active = getActiveWorkout();
   if (active) return resumeActive();
 
+  const weekStatus = templateStatusForWeek(state.workouts);
   const done = templatesDoneThisWeek();
   const next = suggestedTemplate();
   const cardio = cardioTemplate();
 
   const rows = strengthTemplates().map((t) => `
     <button class="list-row" data-template="${t.id}">
-      <span class="tpl-badge ${done.has(t.id) ? 'done' : ''}">${esc(t.code)}</span>
+      ${tplBadge(t.code, weekStatus.get(t.id))}
       <span class="row-main">
         <span class="row-title">${esc(t.name)}</span>
-        <span class="row-sub">${t.exercises.length} esercizi${done.has(t.id) ? ' · fatta questa settimana' : ''}</span>
+        <span class="row-sub">${t.exercises.length} esercizi${weekStatus.get(t.id) === 'done' ? ' · fatta questa settimana' : weekStatus.get(t.id) === 'partial' ? ' · parziale questa settimana' : ''}</span>
       </span>
       ${next && next.id === t.id ? '<span class="pill-accent">Consigliata</span>' : `<span class="row-trail">${icon('chevron-right')}</span>`}
     </button>`).join('');
@@ -891,7 +920,14 @@ function hideEditor() {
 async function finishWorkout() {
   const w = state.current;
   if (document.activeElement) document.activeElement.blur();
-  const st = workoutStats(w);
+
+  // Una serie con le ripetizioni scritte conta come fatta anche senza spunta
+  const filled = (set) => set.done || (set.reps || 0) > 0;
+  const allSets = w.exercises.flatMap((e) => e.sets);
+  const st = { sets: allSets.filter(filled).length, totalSets: allSets.length };
+  const markFilledDone = () => allSets.forEach((set) => {
+    if (!set.done && (set.reps || 0) > 0) { set.done = true; if (set.weight === null) set.weight = 0; }
+  });
 
   if (st.sets === 0) {
     const ok = await confirmSheet({
@@ -910,15 +946,26 @@ async function finishWorkout() {
 
   const pending = st.totalSets - st.sets;
   if (pending > 0) {
-    const ok = await confirmSheet({
-      title: 'Terminare l\'allenamento?',
-      message: `${pending} ${pending === 1 ? 'serie non è stata completata e non verrà registrata' : 'serie non sono state completate e non verranno registrate'}.`,
-      confirmLabel: 'Termina allenamento',
+    const partial = await confirmSheet({
+      title: 'Alcune serie non sono compilate',
+      message: `Hai fatto ${st.sets} serie su ${st.totalSets}. Puoi chiudere l'allenamento come parziale: ` +
+        'conta comunque per l\'obiettivo settimanale e i pesi inseriti restano come riferimento per la prossima volta.',
+      confirmLabel: 'Chiudi come parziale',
+      cancelLabel: 'Continua l\'allenamento',
     });
-    if (!ok) return;
+    if (!partial) return; // si torna all'allenamento così com'era
+    w.partial = true;
+    w.plannedSets = st.totalSets;
+  } else {
+    delete w.partial;
+    delete w.plannedSets;
   }
 
-  // Nello storico restano solo le serie completate
+  markFilledDone();
+
+  // Nello storico restano le serie fatte (pesi e ripetizioni inseriti).
+  // Gli esercizi saltati non vengono salvati: la prossima volta ripartono
+  // dai valori dell'ultima volta in cui sono stati fatti.
   w.exercises = w.exercises
     .map((e) => ({ ...e, sets: e.sets.filter((s) => s.done && (s.reps || 0) > 0) }))
     .filter((e) => e.sets.length > 0);
@@ -927,7 +974,7 @@ async function finishWorkout() {
   await saveNow();
   hideEditor();
   haptic(20);
-  toast('Allenamento registrato');
+  toast(w.partial ? `Allenamento parziale registrato (${partialText(w)})` : 'Allenamento registrato');
 }
 
 /* --- Eventi dell'editor (registrati una sola volta, con delega) ---------- */
