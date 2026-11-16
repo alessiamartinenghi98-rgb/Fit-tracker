@@ -44,6 +44,7 @@ export function initProgress({ onImported }) {
 
   root.addEventListener('click', (e) => {
     const a = e.target.closest('[data-action]')?.dataset.action;
+    if (a === 'report') import('./report.js').then((m) => m.openReportSheet());
     if (a === 'export') exportBackup();
     if (a === 'import') $('#import-file').click();
     if (a === 'pick-exercise') pickExercise();
@@ -195,6 +196,7 @@ export async function renderProgress() {
     html += activitySection() + exerciseSection();
   }
   html += treadmillSection();
+  html += reportSection();
   html += await backupSection();
   root.innerHTML = html;
 
@@ -280,6 +282,19 @@ function exerciseSection() {
       <div class="ex-stats" id="ex-stats"></div>
     </div>
     <p class="footnote">Peso e ripetizioni si riferiscono alla serie più pesante di ogni allenamento. Volume = serie × ripetizioni × peso. Contano solo le serie completate.</p>`;
+}
+
+function reportSection() {
+  return `
+    <div class="section-label">Personal trainer</div>
+    <div class="list">
+      <button class="list-row" data-action="report">
+        <span class="row-icon accent">${icon('file-text')}</span>
+        <span class="row-main"><span class="row-title">Crea report PDF</span>
+        <span class="row-sub">Allenamenti, progressi e costanza da condividere</span></span>
+        <span class="row-trail">${icon('chevron-right')}</span>
+      </button>
+    </div>`;
 }
 
 async function backupSection() {

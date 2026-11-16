@@ -19,6 +19,11 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
   sgarri, promemoria del carbo, settimane precedenti con riepilogo, regole e porzioni.
 - **Progressi**: allenamenti per settimana/mese, grafici di peso, ripetizioni e volume per esercizio,
   backup JSON (esporta / importa).
+- **Report PDF per il personal trainer**: dalla sezione Progressi crei un PDF (4 o 8 settimane,
+  3 mesi o tutto) con costanza settimana per settimana, progressi di ogni esercizio per scheda
+  (inizio periodo, ultima volta, variazione, andamento, stato: in crescita, stabile, in stallo,
+  pronto ad aumentare), tapis roulant, extra, dieta e acqua, dettaglio delle serie e le tue note.
+  Si crea sul telefono e si condivide con WhatsApp, Mail o File.
 - **Motivazione**: frase del giorno in base a come stai andando, riepilogo del lunedì, festeggiamenti
   con coriandoli per traguardi (obiettivo settimanale, record, serie di giorni puliti, acqua, anelli,
   tapis roulant, totali) e incoraggiamento dopo uno sgarro. Solo dentro l'app.
@@ -43,6 +48,7 @@ js/plan.js        Piano alimentare e calcoli della dieta
 js/water.js       Contatore acqua
 js/treadmill.js   Tapis roulant
 js/motivation.js  Frasi motivazionali e festeggiamenti
+js/report.js      Report PDF per il personal trainer (jsPDF, caricato solo quando serve)
 js/progress.js    Progressi e grafici
 icons/            Icone dell'app
 ```
