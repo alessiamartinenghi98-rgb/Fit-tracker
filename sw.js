@@ -10,7 +10,7 @@
    l'aggiornamento su tutti i dispositivi.
    ========================================================================== */
 
-const CACHE_VERSION = 'v10';
+const CACHE_VERSION = 'v11';
 const CACHE_NAME = `fit-tracker-${CACHE_VERSION}`;
 
 // Percorsi relativi: funzionano anche nella sottocartella di GitHub Pages
@@ -32,6 +32,7 @@ const APP_FILES = [
   './js/water.js',
   './js/treadmill.js',
   './js/motivation.js',
+  './js/report.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
@@ -41,6 +42,9 @@ const APP_FILES = [
 const CDN_FILES = [
   'https://cdn.jsdelivr.net/npm/lucide@1.52.0/dist/umd/lucide.min.js',
   'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js',
+  // Librerie del report PDF (caricate solo quando crei il report)
+  'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js',
 ];
 
 self.addEventListener('install', (event) => {
