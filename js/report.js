@@ -18,9 +18,10 @@ import {
   $, esc, icon, toast, haptic, openSheet, initSeg, todayISO, addDays, startOfWeek, parseISO, fmtNum, fmtInt,
 } from './ui.js';
 import {
-  completedSets, isStrength, isPartial, isCardio, isActivity, activityType, workoutStats,
+  completedSets, isStrength, isPartial, isCardio, isActivity, activityType, workoutStats, cardioDetails,
 } from './workouts.js';
 import { strengthTemplates, targetText } from './templates.js';
+import { getBlocks, blockEnd, blockForDate, blockWeek, archivedTemplates } from './blocks.js';
 import { dayStatus, categoryCounts, getPlan, CATEGORIES, counterLabel } from './plan.js';
 import { WATER_GOAL } from './water.js';
 import { hasTreadmill } from './treadmill.js';
@@ -32,12 +33,23 @@ export const PDF_LIBS = [
 
 const WEEKLY_GOAL = 4;
 
-const PERIODS = [
+const FIXED_PERIODS = [
   { id: '4w', label: '4 sett.', weeks: 4 },
   { id: '8w', label: '8 sett.', weeks: 8 },
   { id: '3m', label: '3 mesi', weeks: 13 },
   { id: 'all', label: 'Tutto', weeks: null },
 ];
+
+/**
+ * Periodi del report: con i blocchi, gli ultimi due blocchi (es. "Blocco 2",
+ * "Blocco 1"), poi 8 settimane e Tutto; senza blocchi, i periodi fissi.
+ */
+function periods() {
+  const blocks = getBlocks();
+  if (!blocks.length) return FIXED_PERIODS;
+  const recent = blocks.slice(-2).reverse().map((b) => ({ id: `block:${b.id}`, label: b.name, block: b }));
+  return [...recent, ...FIXED_PERIODS.filter((p) => p.id === '8w' || p.id === 'all')].slice(0, 4);
+}
 
 /* ==========================================================================
    Foglio di scelta delle opzioni
@@ -45,7 +57,7 @@ const PERIODS = [
 
 export async function openReportSheet() {
   const savedName = await db.getMeta('reportName', '');
-  const opts = { period: '8w', details: true, diet: true };
+  const opts = { period: periods()[0].id, details: true, diet: true };
 
   const s = openSheet({
     title: 'Report per il trainer',
@@ -57,7 +69,7 @@ export async function openReportSheet() {
       <div class="field">
         <span class="field-label">Periodo</span>
         <div class="seg" data-period>
-          ${PERIODS.map((p) => `<button data-value="${p.id}" class="${p.id === opts.period ? 'active' : ''}">${p.label}</button>`).join('')}
+          ${periods().map((p) => `<button data-value="${p.id}" class="${p.id === opts.period ? 'active' : ''}">${p.label}</button>`).join('')}
         </div>
       </div>
       <div class="list switch-list" style="margin-bottom:var(--s-4)">
@@ -116,7 +128,7 @@ export async function openReportSheet() {
 async function shareFile(file) {
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: 'Report allenamenti' });
+      await navigator.share({ files: [file] }); // senza titolo: su iPhone diventerebbe un secondo file
       toast('Report pronto');
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
@@ -228,23 +240,31 @@ async function collect(opts) {
   const done = workouts.filter((w) => w.status !== 'active');
   const today = todayISO();
 
-  // Periodo: dal lunedì di N settimane fa (o dal primo allenamento) a oggi
-  const period = PERIODS.find((p) => p.id === opts.period) || PERIODS[1];
+  // Periodo: un blocco, oppure dal lunedì di N settimane fa (o dal primo dato) a oggi
+  const list0 = periods();
+  const period = list0.find((p) => p.id === opts.period) || FIXED_PERIODS.find((p) => p.id === opts.period) || list0[0];
   let from;
-  if (period.weeks) from = addDays(startOfWeek(today), -7 * (period.weeks - 1));
+  let to = today;
+  if (period.block) {
+    from = period.block.start;
+    to = blockEnd(period.block) || today;
+  } else if (period.weeks) from = addDays(startOfWeek(today), -7 * (period.weeks - 1));
   else {
     const first = [...done.map((w) => w.date), ...diet.map((d) => d.date), ...water.map((w) => w.date)].sort()[0];
     from = startOfWeek(first || today);
   }
-  const inRange = (d) => d >= from && d <= today;
+  if (to > today) to = today;
+  const inRange = (d) => d >= from && d <= to;
   const list = done.filter((w) => inRange(w.date)).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt || 0) - (b.createdAt || 0)));
   const strength = list.filter(isStrength);
 
-  // Settimane
+  // Settimane (la prima può iniziare a metà: conta dal primo giorno del periodo)
   const weeks = [];
-  for (let ws = from; ws <= today; ws = addDays(ws, 7)) {
+  for (let ws = startOfWeek(from); ws <= to; ws = addDays(ws, 7)) {
     const we = addDays(ws, 6);
     const ww = list.filter((w) => w.date >= ws && w.date <= we);
+    const b = blockForDate(we < to ? we : to) || blockForDate(ws);
+    const bw = b ? blockWeek(b, we < to ? we : to) : null;
     const st = ww.filter(isStrength);
     const byTpl = {};
     st.forEach((w) => {
@@ -254,6 +274,7 @@ async function collect(opts) {
     });
     weeks.push({
       from: ws, to: we, strength: st.length, partial: st.filter(isPartial).length,
+      block: b ? `${b.name.replace('Blocco ', 'B')}${b.weeks ? ` · S${bw}` : ''}` : '',
       extra: ww.filter((w) => isCardio(w) || isActivity(w)).length,
       free: st.filter((w) => !w.templateId).length,
       byTpl,
@@ -261,17 +282,34 @@ async function collect(opts) {
     });
   }
 
+  // Massimo storico di ogni esercizio (tutto lo storico fino alla fine del periodo)
+  const best = new Map();
+  done.filter((w) => isStrength(w) && w.date <= to).forEach((w) => (w.exercises || []).forEach((e) => {
+    for (const st of completedSets(e)) {
+      const cur = best.get(e.exerciseId);
+      const wt = st.weight || 0;
+      if (!cur || wt > cur.top || (wt === cur.top && st.reps > cur.reps)) best.set(e.exerciseId, { top: wt, reps: st.reps, date: w.date });
+    }
+  }));
+
+  // Schede del periodo: quelle archiviate se è un blocco passato, altrimenti le attuali
+  const source = (period.block && blockEnd(period.block) && archivedTemplates(period.block.id)) || strengthTemplates();
+  const pointsOf = (exerciseId) => {
+    const points = [];
+    strength.forEach((w) => {
+      const entry = (w.exercises || []).find((e) => e.exerciseId === exerciseId);
+      const top = entry && sessionTop(entry);
+      if (top) points.push({ date: w.date, ...top, target: entry.target });
+    });
+    return points;
+  };
+
   // Esercizi per scheda
-  const templates = strengthTemplates().map((t) => {
+  const templates = source.map((t) => {
     const sessions = strength.filter((w) => w.templateId === t.id);
     const exercises = t.exercises.map((te) => {
-      const points = [];
-      strength.forEach((w) => {
-        const entry = (w.exercises || []).find((e) => e.exerciseId === te.exerciseId);
-        const top = entry && sessionTop(entry);
-        if (top) points.push({ date: w.date, ...top });
-      });
-      return { name: te.name, target: te, points, status: exerciseStatus(points, te) };
+      const points = pointsOf(te.exerciseId);
+      return { name: te.name, target: te, points, best: best.get(te.exerciseId), status: exerciseStatus(points, te) };
     });
     const planned = sessions.reduce((s, w) => s + (w.plannedSets || workoutStats(w).sets), 0);
     const doneSets = sessions.reduce((s, w) => s + workoutStats(w).sets, 0);
@@ -283,6 +321,19 @@ async function collect(opts) {
     };
   });
 
+  // Esercizi fatti nel periodo ma non nelle schede (es. tolti dal blocco precedente)
+  const inSource = new Set(source.flatMap((t) => t.exercises.map((e) => e.exerciseId)));
+  const others = [];
+  const seen = new Set();
+  strength.forEach((w) => (w.exercises || []).forEach((e) => {
+    if (inSource.has(e.exerciseId) || seen.has(e.exerciseId)) return;
+    seen.add(e.exerciseId);
+    const points = pointsOf(e.exerciseId);
+    if (!points.length) return;
+    const target = points[points.length - 1].target || null;
+    others.push({ name: e.name, target, points, best: best.get(e.exerciseId), status: exerciseStatus(points, target) });
+  }));
+
   // Dieta e acqua
   const dietDays = diet.filter((d) => inRange(d.date));
   const statuses = dietDays.map(dayStatus);
@@ -292,7 +343,7 @@ async function collect(opts) {
   const targets = getPlan().targets;
 
   return {
-    from, to: today, weeks, list, strength, templates,
+    from, to, period, weeks, list, strength, templates, others, codes: source,
     extras: list.filter((w) => isCardio(w) || isActivity(w)),
     treadmill: list.filter(hasTreadmill),
     diet: {
@@ -369,7 +420,8 @@ async function createReport(opts) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(255, 255, 255);
   doc.text('Report allenamenti', M, 14);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(200, 200, 205);
-  doc.text(clean(`${opts.name ? `${opts.name} · ` : ''}dal ${fmtLong(data.from)} al ${fmtLong(data.to)} · ${data.weeks.length} settimane`), M, 22);
+  const periodName = data.period.block ? `${data.period.block.name} · ` : '';
+  doc.text(clean(`${opts.name ? `${opts.name} · ` : ''}${periodName}dal ${fmtLong(data.from)} al ${fmtLong(data.to)} · ${data.weeks.length} settimane`), M, 22);
   y = 40;
 
   /* --- Riepilogo --------------------------------------------------------- */
@@ -407,6 +459,13 @@ async function createReport(opts) {
     if (e.status === 'In stallo') stalled.push(`${e.name} (${tp.t.code})`);
   }));
   const keyPoints = [];
+  const nowBlock = blockForDate(data.to);
+  if (nowBlock && nowBlock.weeks && nowBlock.start >= data.from) {
+    const wk = blockWeek(nowBlock, data.to);
+    keyPoints.push(`${nowBlock.name} iniziato il ${fmtDate(nowBlock.start)}: settimana ${Math.min(wk, nowBlock.weeks)} di ${nowBlock.weeks}${wk === nowBlock.weeks ? ' (scarico)' : ''}.`);
+  }
+  const prevBlocks = getBlocks().filter((b) => blockEnd(b) && blockEnd(b) >= data.from && b.start <= data.to);
+  prevBlocks.forEach((b) => keyPoints.push(`${b.name}: dal ${fmtDate(b.start < data.from ? data.from : b.start)} al ${fmtDate(blockEnd(b))} con le schede precedenti.`));
   keyPoints.push(`Costanza: ${fmtNum(Math.round(avgWeek * 10) / 10)} allenamenti a settimana su ${WEEKLY_GOAL} previsti${nPartial ? `, ${nPartial} ${nPartial === 1 ? 'chiuso' : 'chiusi'} come ${nPartial === 1 ? 'parziale' : 'parziali'}` : ''}.`);
   data.templates.forEach((tp) => {
     if (tp.sessions) keyPoints.push(`Scheda ${tp.t.code} (${tp.t.name}): ${tp.sessions} ${tp.sessions === 1 ? 'volta' : 'volte'}, serie completate ${tp.completion ?? 0}%.`);
@@ -434,18 +493,24 @@ async function createReport(opts) {
 
   /* --- Settimana per settimana -------------------------------------------- */
   h1('Settimana per settimana');
-  const codes = strengthTemplates();
+  const codes = data.codes;
+  const hasBlocks = data.weeks.some((w) => w.block);
+  const off = hasBlocks ? 1 : 0;
   tbl({
-    head: [['Settimana', ...codes.map((t) => t.code), 'Totale', 'Parziali', 'Extra', 'Tapis (min)']],
+    head: [['Settimana', ...(hasBlocks ? ['Blocco'] : []), ...codes.map((t) => t.code), 'Totale', 'Parziali', 'Extra', 'Tapis (min)']],
     body: data.weeks.map((w) => [
       clean(`${fmtDate(w.from)} - ${fmtDate(w.to)}`),
+      ...(hasBlocks ? [clean(w.block)] : []),
       ...codes.map((t) => (w.byTpl[t.id] === 'done' ? 'Sì' : w.byTpl[t.id] === 'partial' ? 'Parz.' : '-')),
       `${w.strength}/${WEEKLY_GOAL}`,
       w.partial ? `${w.partial}` : '-',
       w.extra ? `${w.extra}` : '-',
       w.tm ? `${w.tm}` : '-',
     ]),
-    columnStyles: { 0: { cellWidth: 34 }, ...Object.fromEntries(codes.map((_, i) => [i + 1, { cellWidth: 17 }])) },
+    columnStyles: {
+      0: { cellWidth: 32 }, ...(hasBlocks ? { 1: { cellWidth: 20 } } : {}),
+      ...Object.fromEntries(codes.map((_, i) => [i + 1 + off, { cellWidth: 15 }])),
+    },
     styles: { halign: 'center' },
     didParseCell: (h) => {
       if (h.section !== 'body') return;
@@ -453,7 +518,8 @@ async function createReport(opts) {
       const v = h.cell.raw;
       if (v === 'Sì') { h.cell.styles.fillColor = ACCENT_SOFT; h.cell.styles.textColor = ACCENT; h.cell.styles.fontStyle = 'bold'; }
       if (v === 'Parz.') { h.cell.styles.fillColor = PARTIAL_SOFT; h.cell.styles.textColor = ACCENT; }
-      if (h.column.index === codes.length + 1 && parseInt(v, 10) >= WEEKLY_GOAL) h.cell.styles.fontStyle = 'bold';
+      if (h.column.index === codes.length + 1 + off && parseInt(v, 10) >= WEEKLY_GOAL) h.cell.styles.fontStyle = 'bold';
+      if (hasBlocks && h.column.index === 1) h.cell.styles.textColor = MUTED;
     },
   });
 
@@ -463,19 +529,30 @@ async function createReport(opts) {
     para(tp.sessions
       ? `${tp.sessions} ${tp.sessions === 1 ? 'sessione' : 'sessioni'} nel periodo${tp.partial ? ` (${parziali(tp.partial)})` : ''} · serie completate ${tp.completion ?? 0}% · ultima volta ${fmtDay(tp.last)}.`
       : 'Nessuna sessione nel periodo.');
-    const rows = tp.exercises.map((e) => {
+    exerciseTable(tp.exercises);
+  });
+  if (data.others.length) {
+    h1('Altri esercizi nel periodo');
+    para('Esercizi fatti nel periodo che non sono nelle schede attuali (per esempio tolti dal blocco precedente): lo storico resta.');
+    exerciseTable(data.others);
+  }
+  para('Legenda stato: "Pronto ad aumentare" = nell\'ultima sessione tutte le serie al massimo delle ripetizioni; "In stallo" = nessun aumento di peso o ripetizioni nelle ultime 3 sessioni; "In crescita" / "Stabile" / "In calo" = confronto tra inizio periodo e ultima volta (serie più pesante). "Max storico" = carico più alto di sempre, anche prima del periodo. CL = corpo libero.', { size: 7.8 });
+
+  function exerciseTable(list) {
+    const load = (top, reps, bw) => (bw && !top ? `CL × ${reps}` : `${kg(top)} kg × ${reps}`);
+    const rows = list.map((e) => {
       const first = e.points[0];
       const last = e.points[e.points.length - 1];
-      const max = e.points.length ? Math.max(...e.points.map((p) => p.top)) : null;
+      const bw = Boolean(e.target?.bodyweight);
       const diff = first && last ? last.top - first.top : null;
       return {
         e,
         cells: [
           clean(e.name),
-          clean(targetText(e.target)),
-          first ? clean(`${kg(first.top)} kg × ${first.reps}\n${fmtDate(first.date)}`) : '-',
-          last ? clean(`${kg(last.top)} kg × ${last.reps}\n${fmtDate(last.date)}`) : '-',
-          max !== null ? `${kg(max)} kg` : '-',
+          e.target ? clean(targetText(e.target)) : '-',
+          first ? clean(`${load(first.top, first.reps, bw)}\n${fmtDate(first.date)}`) : '-',
+          last ? clean(`${load(last.top, last.reps, bw)}\n${fmtDate(last.date)}`) : '-',
+          e.best ? clean(`${load(e.best.top, e.best.reps, bw)}\n${fmtDate(e.best.date)}`) : '-',
           diff === null ? '-' : diff > 0 ? `+${kg(diff)} kg` : diff < 0 ? `-${kg(-diff)} kg` : '=',
           `${e.points.length}`,
           '',
@@ -484,11 +561,11 @@ async function createReport(opts) {
       };
     });
     tbl({
-      head: [['Esercizio', 'Obiettivo', 'Inizio periodo', 'Ultima volta', 'Max', 'Var.', 'Volte', 'Andamento', 'Stato']],
+      head: [['Esercizio', 'Obiettivo', 'Inizio periodo', 'Ultima volta', 'Max storico', 'Var.', 'Volte', 'Andamento', 'Stato']],
       body: rows.map((r) => r.cells),
       columnStyles: {
-        0: { cellWidth: 36, fontStyle: 'bold' }, 1: { cellWidth: 24 }, 2: { cellWidth: 21 }, 3: { cellWidth: 21 },
-        4: { cellWidth: 14 }, 5: { cellWidth: 14 }, 6: { cellWidth: 12, halign: 'center' }, 7: { cellWidth: 21 }, 8: { cellWidth: 19 },
+        0: { cellWidth: 33, fontStyle: 'bold' }, 1: { cellWidth: 22 }, 2: { cellWidth: 20 }, 3: { cellWidth: 20 },
+        4: { cellWidth: 20 }, 5: { cellWidth: 17 }, 6: { cellWidth: 11, halign: 'center' }, 7: { cellWidth: 20 }, 8: { cellWidth: 19 },
       },
       styles: { fontSize: 7.8 },
       didParseCell: (h) => {
@@ -520,8 +597,7 @@ async function createReport(opts) {
         doc.setFillColor(...ACCENT); doc.circle(px(vals.length - 1), py(vals[vals.length - 1]), 0.6, 'F');
       },
     });
-  });
-  para('Legenda stato: "Pronto ad aumentare" = nell\'ultima sessione tutte le serie al massimo delle ripetizioni; "In stallo" = nessun aumento di peso o ripetizioni nelle ultime 3 sessioni; "In crescita" / "Stabile" / "In calo" = confronto tra inizio periodo e ultima volta (serie più pesante).', { size: 7.8 });
+  }
 
   /* --- Tapis roulant ed extra --------------------------------------------- */
   if (data.treadmill.length) {
@@ -546,7 +622,7 @@ async function createReport(opts) {
         clean(fmtDay(w.date)),
         clean(isCardio(w) ? 'Cardio del sabato' : activityType(w.activity).label),
         w.duration ? `${w.duration} min` : '-',
-        clean(w.note || ''),
+        clean([w.note, isCardio(w) ? cardioDetails(w) : ''].filter(Boolean).join(' · ')),
       ]),
       columnStyles: { 0: { cellWidth: 28 }, 1: { cellWidth: 36 }, 2: { cellWidth: 20 } },
     });
@@ -583,7 +659,7 @@ async function createReport(opts) {
           const unit = e.target?.unit === 'g' ? ' (per gamba)' : e.target?.unit === 'b' ? ' (per braccio)' : '';
           return [
             clean(`${e.name}${unit}`),
-            clean(sets.map((s) => `${kg(s.weight || 0)}×${s.reps}`).join('   ')),
+            clean(sets.map((s) => `${e.target?.bodyweight && !s.weight ? 'CL' : kg(s.weight || 0)}×${s.reps}`).join('   ')),
             `${fmtInt(sets.reduce((v, s) => v + s.reps * (s.weight || 0), 0))} kg`,
           ];
         }),
