@@ -18,7 +18,7 @@ import {
   $, esc, icon, toast, haptic, openSheet, initSeg, todayISO, addDays, startOfWeek, parseISO, fmtNum, fmtInt,
 } from './ui.js';
 import {
-  completedSets, isStrength, isPartial, isCardio, isActivity, activityType, workoutStats, cardioDetails,
+  completedSets, isStrength, isPartial, isCardio, isActivity, activityType, workoutStats, cardioDetails, distanceText,
 } from './workouts.js';
 import { strengthTemplates, targetText } from './templates.js';
 import { getBlocks, blockEnd, blockForDate, blockWeek, archivedTemplates } from './blocks.js';
@@ -617,14 +617,15 @@ async function createReport(opts) {
   if (data.extras.length) {
     h1('Allenamenti extra');
     tbl({
-      head: [['Data', 'Tipo', 'Durata', 'Nota']],
+      head: [['Data', 'Tipo', 'Durata', 'Distanza e passo', 'Nota']],
       body: data.extras.map((w) => [
         clean(fmtDay(w.date)),
         clean(isCardio(w) ? 'Cardio del sabato' : activityType(w.activity).label),
         w.duration ? `${w.duration} min` : '-',
+        clean(distanceText(w) || '-'),
         clean([w.note, isCardio(w) ? cardioDetails(w) : ''].filter(Boolean).join(' · ')),
       ]),
-      columnStyles: { 0: { cellWidth: 28 }, 1: { cellWidth: 36 }, 2: { cellWidth: 20 } },
+      columnStyles: { 0: { cellWidth: 26 }, 1: { cellWidth: 32 }, 2: { cellWidth: 18 }, 3: { cellWidth: 40 } },
     });
   }
 
