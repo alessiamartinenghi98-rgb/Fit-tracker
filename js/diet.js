@@ -22,6 +22,11 @@ import {
   slotOptions, plannedOption, OTHER_OPTION,
 } from './plan.js';
 import { afterMeal } from './motivation.js';
+import {
+  loadWeekPlans, getWeek, saveWeek, isMainSlot, blockLabel, breakfastOptions, breakfastText, findSwap, swapCells,
+} from './weekplan.js';
+import { openOrganizer, blockHTML, carbHTML } from './organizer.js';
+import { weekdayIndex } from './plan.js';
 
 const state = {
   weekStart: startOfWeek(todayISO()), // lunedì della settimana mostrata
@@ -36,11 +41,14 @@ const notifyChange = () => document.dispatchEvent(new CustomEvent('data-changed'
 
 export async function initDiet() {
   await loadPlan();
+  await loadWeekPlans();
   state.legacyCount = (await db.getAll('meals')).length;
   await loadWeek();
   render();
 
   $('#btn-diet-rules').addEventListener('click', openRules);
+  $('#btn-organize').addEventListener('click', () => openOrganizer(state.weekStart, { onClose: render }));
+  document.addEventListener('weekplan-changed', render);
 
   const root = $('#diet-content');
   root.addEventListener('click', (e) => {
@@ -52,10 +60,11 @@ export async function initDiet() {
     if (action === 'portions') return openPortions();
     if (action === 'edit-plan') return openPlanEditor();
     if (action === 'legacy') return openLegacyDiary();
+    if (action === 'organize') return openOrganizer(state.weekStart, { onClose: render });
+    if (action === 'day-yes') return answerYes(state.selected);
+    if (action === 'day-no') return openDaySheet(state.selected);
     const dayBtn = t.closest('[data-date]');
     if (dayBtn) { state.selected = dayBtn.dataset.date; haptic(5); return render(); }
-    const quick = t.closest('[data-quick]');
-    if (quick) return quickLog(quick.dataset.quick);
     const meal = t.closest('[data-slot]');
     if (meal && !meal.classList.contains('locked')) openMealSheet(meal.dataset.slot);
   });
@@ -64,6 +73,7 @@ export async function initDiet() {
 /** Ricarica dopo un'importazione dei dati. */
 export async function refreshDiet() {
   await loadPlan();
+  await loadWeekPlans();
   state.legacyCount = (await db.getAll('meals')).length;
   await loadWeek();
   render();
@@ -126,6 +136,19 @@ function render() {
   // Riepilogo delle settimane passate
   if (!isCurrentWeek) html += weekSummary(days, counts);
 
+  // Giorni della settimana
+  html += `<div class="day-strip">${dates.map((d, i) => {
+    const st = dayStatus(state.days.get(d));
+    return `
+      <button class="day-chip ${d === state.selected ? 'active' : ''} ${d === today ? 'today' : ''}" data-date="${d}">
+        <span class="dc-wd">${WEEKDAYS[i].slice(0, 3)}</span>
+        <span class="dc-num num">${Number(d.slice(8))}</span>
+        <span class="dc-dot ${st === 'empty' ? '' : st}"></span>
+      </button>`;
+  }).join('')}</div>`;
+
+  html += dayView(state.selected);
+
   // Contatori settimanali fatti/previsti
   html += `
     <div class="card counters-card">
@@ -145,18 +168,6 @@ function render() {
       </div>
     </div>`;
 
-  // Giorni della settimana
-  html += `<div class="day-strip">${dates.map((d, i) => {
-    const st = dayStatus(state.days.get(d));
-    return `
-      <button class="day-chip ${d === state.selected ? 'active' : ''} ${d === today ? 'today' : ''}" data-date="${d}">
-        <span class="dc-wd">${WEEKDAYS[i].slice(0, 3)}</span>
-        <span class="dc-num num">${Number(d.slice(8))}</span>
-        <span class="dc-dot ${st}"></span>
-      </button>`;
-  }).join('')}</div>`;
-
-  html += dayView(state.selected);
 
   // Informazioni e impostazioni
   html += `
@@ -209,74 +220,294 @@ function weekSummary(days, counts) {
     </div>`;
 }
 
+/* --- Giornata: cosa è in programma e com'è andata ------------------------ */
+
+/** Casella della settimana organizzata per quel giorno e pasto. */
+function cellFor(date, slotId) {
+  return getWeek(startOfWeek(date))[weekdayIndex(date)][slotId] || null;
+}
+
+/** Pasto previsto (per i fogli di dettaglio): dalla settimana organizzata. */
+function plannedFor(date, slotId) {
+  if (slotId === 'spuntino') return { text: planForDate(date).spuntino };
+  const cell = cellFor(date, slotId);
+  if (isMainSlot(slotId)) {
+    return {
+      category: cell?.block || null, carbo: Boolean(cell?.carbo),
+      text: [cell?.block ? categoryLabel(cell.block) : 'Non programmato', cell?.note].filter(Boolean).join(' · '),
+    };
+  }
+  return { option: cell?.block || null, text: [breakfastText(cell?.block) || 'Non programmata', cell?.note].filter(Boolean).join(' · ') };
+}
+
+/** Stato di un pasto segnato: 'planned', 'swapped' oppure 'cheat'. */
+function mealState(meal, cell, slotId) {
+  if (!meal) return null;
+  if (isCheatMeal(meal) || (meal.cheat && slotId !== 'pranzo' && slotId !== 'cena')) return 'cheat';
+  if (meal.status === 'swapped') return 'swapped';
+  if (isMainSlot(slotId) && cell?.block && meal.category && meal.category !== cell.block) return 'swapped';
+  return 'planned';
+}
+
 /** Pasti del giorno selezionato. */
 function dayView(date) {
   const day = state.days.get(date);
-  const status = dayStatus(day);
-  const future = date > todayISO();
-  const plan = planForDate(date);
+  const today = todayISO();
+  const future = date > today;
   const title = formatFullDate(date);
+  const loggedCount = SLOTS.filter((sl) => day?.meals?.[sl.id]).length;
+  const status = dayStatus(day);
 
-  const pill = future ? '<span class="status-pill">In programma</span>' : {
-    clean: '<span class="status-pill clean">Giornata pulita</span>',
-    cheat: '<span class="status-pill cheat">Sgarro</span>',
-    empty: '<span class="status-pill">Da segnare</span>',
-  }[status];
+  const rows = SLOTS.map((slot) => {
+    const logged = day?.meals?.[slot.id];
+    const cell = slot.id === 'spuntino' ? null : cellFor(date, slot.id);
+    const st = mealState(logged, cell, slot.id);
+    let what;
+    if (slot.id === 'spuntino') {
+      what = `<span class="dy-snack">${esc(planForDate(date).spuntino || 'Yogurt bianco')}</span>`;
+    } else {
+      what = `
+        <div class="dy-top">${cell?.block ? blockHTML(slot.id, cell.block, 'blk-lg') : '<span class="dy-empty">Non programmato</span>'}
+          ${isMainSlot(slot.id) && cell?.block ? carbHTML(cell.carbo) : ''}</div>
+        ${cell?.note ? `<span class="dy-note">${esc(cell.note)}</span>` : ''}`;
+    }
+    const mark = !st ? ''
+      : st === 'cheat' ? '<span class="status-pill cheat small">Sgarro</span>'
+        : st === 'swapped' ? `<span class="dy-mark swapped">${icon('arrow-left-right')}</span>`
+          : `<span class="dy-mark">${icon('circle-check')}</span>`;
+    const extra = st === 'cheat' && logged.note ? `<span class="dy-note">Sgarro: ${esc(logged.note)}</span>`
+      : st === 'swapped' && logged.swappedFrom ? `<span class="dy-note">Invertito: era ${esc(isMainSlot(slot.id) ? categoryLabel(logged.swappedFrom) : blockLabel('colazione', logged.swappedFrom))}</span>` : '';
+    return `
+      <div class="dy-meal ${logged ? 'logged' : ''}" ${logged && !future ? `data-slot="${slot.id}"` : ''}>
+        <div class="dy-label">${esc(slot.label)}</div>
+        <div class="dy-what">${what}${extra}</div>
+        <div class="dy-state">${mark}</div>
+      </div>`;
+  }).join('');
 
   let html = `
-    <div class="day-title">
-      <h2>${esc(title.charAt(0).toUpperCase() + title.slice(1))}</h2>${pill}
+    <div class="card today-card">
+      <div class="today-head"><b>${date === today ? 'Oggi in programma' : future ? 'In programma' : 'Programma del giorno'}</b>
+        <span>${esc(title.charAt(0).toUpperCase() + title.slice(1))}</span></div>
+      ${rows}
     </div>`;
 
   if (carbCount(day) > 1) {
     html += `<div class="note-banner">${icon('wheat')}<span>Hai segnato il carbo ${carbCount(day)} volte: il piano ne prevede una sola porzione al giorno.</span></div>`;
   }
 
-  html += SLOTS.map((slot) => mealCard(slot, plan[slot.id], day?.meals?.[slot.id], future)).join('');
-  if (future) html += '<p class="hint">Potrai segnare i pasti a partire da quel giorno.</p>';
+  if (future) {
+    html += `
+      <div class="card ask-card">
+        <div class="ask-sub" style="margin:0">Potrai segnare com'è andata a partire da quel giorno.</div>
+        <button class="btn btn-secondary btn-block" data-action="organize" style="margin-top:var(--s-3)">${icon('calendar-range')} Organizza settimana</button>
+      </div>`;
+  } else if (loggedCount === SLOTS.length) {
+    const changed = SLOTS.some((sl) => ['swapped', 'cheat'].includes(mealState(day.meals[sl.id], sl.id === 'spuntino' ? null : cellFor(date, sl.id), sl.id)));
+    html += `
+      <div class="card ask-card done">
+        <div class="ask-row">
+          <span class="ask-icon ${status}">${icon(status === 'cheat' ? 'heart' : 'circle-check')}</span>
+          <span class="row-main"><span class="ask-title">${status === 'cheat' ? 'Giornata con uno sgarro' : changed ? 'Dieta rispettata, con un cambio' : 'Fatto come programmato'}</span>
+          <span class="ask-sub" style="margin:0">${status === 'cheat' ? 'Domani si riparte, senza sensi di colpa.' : 'Giornata pulita.'}</span></span>
+        </div>
+        <button class="btn btn-ghost btn-block" data-action="day-no">${icon('pencil')} Modifica</button>
+      </div>`;
+  } else {
+    html += `
+      <div class="card ask-card">
+        <div class="ask-title">${date === today ? 'Oggi come programmato?' : 'Com\'è andata?'}</div>
+        <div class="ask-sub">${loggedCount ? `Hai già segnato ${loggedCount} pasti su 4: rispondi per completare la giornata.` : 'Rispondi a fine giornata (o quando vuoi).'}</div>
+        <div class="grid-2">
+          <button class="btn btn-primary" data-action="day-yes">${icon('check')} Sì</button>
+          <button class="btn btn-secondary" data-action="day-no">${icon('x')} No</button>
+        </div>
+      </div>`;
+  }
   return html;
 }
 
-function mealCard(slot, planned, logged, future) {
-  const planText = slot.main ? planned.text : planned;
-  const planCat = slot.main ? `<span class="cat-chip">${esc(categoryLabel(planned.category))}</span>` : '';
-
-  let body;
-  if (logged) {
-    const tags = [];
-    if (logged.category) tags.push(`<span class="cat-chip solid">${esc(categoryLabel(logged.category))}</span>`);
-    if (logged.option) tags.push(`<span class="cat-chip solid wrap">${esc(logged.optionLabel || OTHER_OPTION.label)}</span>`);
-    if (logged.carbo) tags.push('<span class="cat-chip carb">+ carbo</span>');
-    // Pasti segnati prima delle opzioni: solo "Come da piano" (mai per uno sgarro)
-    if (!logged.category && !logged.option && !logged.note && !isCheatMeal(logged)) tags.push('<span class="cat-chip solid">Come da piano</span>');
-    body = `
-      <div class="meal-logged">
-        ${tags.length ? `<div class="meal-tags">${tags.join('')}</div>` : ''}
-        ${logged.note ? `<div class="meal-note">${esc(logged.note)}</div>` : ''}
-      </div>`;
-  } else if (!future) {
-    body = `
-      <div class="meal-actions">
-        <button class="btn btn-secondary" data-quick="${slot.id}">${icon('check')} Come da piano</button>
-        <button class="btn btn-ghost" data-slot="${slot.id}">Altro…</button>
-      </div>`;
-  } else {
-    body = '';
+/** Pasto "come previsto" dalla casella della settimana. */
+function plannedMeal(date, slotId, at) {
+  if (slotId === 'spuntino') {
+    const opt = plannedOption(date, 'spuntino');
+    return { note: '', cheat: false, at, status: 'planned', ...(opt ? { option: opt.id, optionLabel: opt.label } : {}) };
   }
+  const cell = cellFor(date, slotId);
+  if (isMainSlot(slotId)) {
+    return { category: cell?.block || null, carbo: Boolean(cell?.carbo), note: cell?.note || '', cheat: false, at, status: 'planned' };
+  }
+  const opt = breakfastOptions().find((o) => o.id === cell?.block);
+  return { note: cell?.note || '', cheat: false, at, status: 'planned', ...(opt ? { option: opt.id, optionLabel: opt.label } : {}) };
+}
 
-  const badge = logged
-    ? (isCheatMeal(logged) ? '<span class="status-pill cheat small">Sgarro</span>' : `<span class="meal-ok">${icon('circle-check')}</span>`)
-    : '';
+/** Salva tutti i pasti di una giornata in una volta. */
+async function saveDay(date, meals) {
+  const day = state.days.get(date) || { date, meals: {} };
+  day.meals = { ...day.meals, ...meals };
+  day.updatedAt = Date.now();
+  await db.put('dietDays', day);
+  state.days.set(date, day);
+  notifyChange();
+  const list = Object.values(meals);
+  const cheat = list.find(isCheatMeal);
+  afterMeal(date, cheat || list[list.length - 1]);
+}
 
-  return `
-    <div class="card meal-card ${logged ? 'card-tap logged' : ''} ${future ? 'locked' : ''}" ${logged ? `data-slot="${slot.id}"` : ''}>
-      <div class="meal-card-head">
-        <h3>${icon(slot.icon)}${esc(slot.label)}</h3>
-        ${badge}
-      </div>
-      <div class="plan-hint">${planCat}<span>${esc(planText)}</span></div>
-      ${body}
-    </div>`;
+/** "Sì": la giornata è andata come programmato (i pasti già segnati restano). */
+async function answerYes(date) {
+  const empty = ['pranzo', 'cena'].filter((sl) => !cellFor(date, sl)?.block && !state.days.get(date)?.meals?.[sl]);
+  if (empty.length) {
+    toast(`${empty.map((sl) => SLOTS.find((x) => x.id === sl).label).join(' e ')} non programmat${empty.length > 1 ? 'i' : 'o'}: dimmi cosa hai mangiato`, { error: true });
+    return openDaySheet(date);
+  }
+  const at = Date.now();
+  const meals = {};
+  SLOTS.forEach((sl) => { if (!state.days.get(date)?.meals?.[sl.id]) meals[sl.id] = plannedMeal(date, sl.id, at); });
+  await saveDay(date, meals);
+  haptic(20);
+  render();
+  toast('Giornata segnata come programmato');
+}
+
+/** "No" (o Modifica): per ogni pasto come previsto, invertito o sgarro. */
+function openDaySheet(date) {
+  const weekStart = startOfWeek(date);
+  const dayIdx = weekdayIndex(date);
+  const week = getWeek(weekStart);
+  const day = state.days.get(date);
+  const loggedIn = (i, slot) => Boolean(state.days.get(addDays(weekStart, i))?.meals?.[slot]);
+
+  // Stato di partenza di ogni pasto
+  const draft = {};
+  SLOTS.forEach((sl) => {
+    const meal = day?.meals?.[sl.id];
+    const cell = sl.id === 'spuntino' ? null : week[dayIdx][sl.id];
+    const st = mealState(meal, cell, sl.id) || 'planned';
+    const ate = st === 'swapped' ? (meal.category || meal.option || null) : null;
+    draft[sl.id] = {
+      state: st,
+      ate,
+      note: st === 'cheat' ? meal.note || '' : '',
+      // Già invertito in precedenza: la casella contiene ciò che hai mangiato, si mostra l'originale
+      orig: st === 'swapped' && cell?.block === ate && meal.swappedFrom ? meal.swappedFrom : (cell?.block || null),
+    };
+  });
+
+  const choices = (slotId) => (isMainSlot(slotId) ? CATEGORIES.map((c) => c.id) : breakfastOptions().map((o) => o.id));
+  const planned = (slotId) => draft[slotId]?.orig || null;
+  const current = (slotId) => week[dayIdx][slotId]?.block || null;
+
+  const swapText = (slotId) => {
+    const d = draft[slotId];
+    const was = planned(slotId);
+    if (d.state !== 'swapped' || !d.ate || d.ate === was || d.ate === current(slotId)) return '';
+    const label = (b) => (isMainSlot(slotId) ? categoryLabel(b) : blockLabel('colazione', b));
+    const target = findSwap(week, dayIdx, slotId, d.ate, loggedIn);
+    if (!was) return '';
+    if (!target) return `Nessun altro giorno della settimana ha ${label(d.ate)} da scambiare: il conteggio della settimana cambierà.`;
+    const dayName = WEEKDAYS[target.day].toLowerCase();
+    const when = target.day === dayIdx ? 'oggi' : dayName;
+    return `${when.charAt(0).toUpperCase() + when.slice(1)} a ${target.slot} avevi <b>${esc(label(d.ate))}</b>: diventa <b>${esc(label(was))}</b>. Così la settimana resta in equilibrio.`;
+  };
+
+  const rowHTML = (sl) => {
+    const d = draft[sl.id];
+    const opts = sl.id === 'spuntino' ? ['planned', 'cheat'] : ['planned', 'swapped', 'cheat'];
+    const names = { planned: 'Come previsto', swapped: 'Invertito', cheat: 'Sgarro' };
+    const plannedChip = sl.id === 'spuntino'
+      ? `<span class="dy-snack">${esc(planForDate(date).spuntino || 'Yogurt bianco')}</span>`
+      : planned(sl.id) ? blockHTML(sl.id, planned(sl.id)) : '<span class="dy-empty">Non programmato</span>';
+    const info = swapText(sl.id);
+    return `
+      <div class="dm-row" data-row="${sl.id}">
+        <div class="dm-head"><b>${esc(sl.label)}</b>${plannedChip}</div>
+        <div class="seg3 n${opts.length}">${opts.map((o) => `<button class="${d.state === o ? `on ${o}` : ''}" data-st="${o}">${names[o]}</button>`).join('')}</div>
+        ${d.state === 'swapped' ? `
+          <div class="dm-label">Cosa hai mangiato?</div>
+          <div class="chips">${choices(sl.id).filter((b) => b !== planned(sl.id)).map((b) => `
+            <button class="blk ${isMainSlot(sl.id) ? `k-${b}` : 'k-col'} ${d.ate === b ? 'sel' : ''}" data-ate="${esc(b)}">${esc(blockLabel(sl.id, b))}</button>`).join('')}</div>
+          ${info ? `<div class="dm-info">${icon('arrow-left-right')}<span>${info}</span></div>` : ''}` : ''}
+        ${d.state === 'cheat' ? `
+          <input class="input dm-cheat" data-cheat-note value="${esc(d.note)}" maxlength="200" placeholder="Cosa hai mangiato (facoltativo)" autocomplete="off">` : ''}
+      </div>`;
+  };
+
+  const s = openSheet({
+    title: 'Com\'è andata?',
+    tall: true,
+    html: `<div data-rows>${SLOTS.map(rowHTML).join('')}</div>
+      <div class="sheet-actions"><button class="btn btn-primary btn-block" data-save>${icon('check')} Salva la giornata</button></div>`,
+  });
+  const body = s.body;
+  const redraw = (slotId) => {
+    const el = $(`[data-row="${slotId}"]`, body);
+    el.outerHTML = rowHTML(SLOTS.find((x) => x.id === slotId));
+  };
+  body.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-row]');
+    if (!row) return;
+    const slotId = row.dataset.row;
+    const stBtn = e.target.closest('[data-st]');
+    if (stBtn) {
+      draft[slotId].state = stBtn.dataset.st;
+      haptic(5);
+      return redraw(slotId);
+    }
+    const ate = e.target.closest('[data-ate]');
+    if (ate) {
+      draft[slotId].ate = ate.dataset.ate;
+      haptic(5);
+      return redraw(slotId);
+    }
+  });
+  body.addEventListener('input', (e) => {
+    if (e.target.matches('[data-cheat-note]')) draft[e.target.closest('[data-row]').dataset.row].note = e.target.value;
+  });
+
+  $('[data-save]', body).addEventListener('click', async () => {
+    // Controlli: invertito senza scelta, pasto non programmato
+    for (const sl of SLOTS) {
+      const d = draft[sl.id];
+      if (d.state === 'swapped' && !d.ate) return toast(`${sl.label}: scegli cosa hai mangiato`, { error: true });
+      if (d.state === 'planned' && isMainSlot(sl.id) && !current(sl.id)) {
+        return toast(`${sl.label} non programmato: scegli "Invertito" e cosa hai mangiato`, { error: true });
+      }
+    }
+    const at = Date.now();
+    const meals = {};
+    let moved = 0;
+    for (const sl of SLOTS) {
+      const d = draft[sl.id];
+      const prev = day?.meals?.[sl.id];
+      if (d.state === 'planned') {
+        meals[sl.id] = plannedMeal(date, sl.id, prev?.at || at);
+      } else if (d.state === 'cheat') {
+        meals[sl.id] = { cheat: true, note: d.note.trim(), at: prev?.at || at, status: 'cheat',
+          ...(isMainSlot(sl.id) ? { carbo: Boolean(week[dayIdx][sl.id]?.carbo) } : {}) };
+      } else {
+        const was = planned(sl.id);
+        const cur = current(sl.id);
+        if (cur && d.ate !== cur) {
+          // Scambio nella settimana: il pasto previsto va nel giorno che aveva quello mangiato
+          const target = findSwap(week, dayIdx, sl.id, d.ate, loggedIn);
+          if (target) { swapCells(week, { day: dayIdx, slot: sl.id }, target); moved++; }
+          else week[dayIdx][sl.id].block = d.ate;
+        }
+        const cell = week[dayIdx][sl.id];
+        const opt = breakfastOptions().find((o) => o.id === d.ate);
+        meals[sl.id] = isMainSlot(sl.id)
+          ? { category: d.ate, carbo: Boolean(cell.carbo), note: cell.note || '', cheat: false, at: prev?.at || at, status: 'swapped', swappedFrom: was }
+          : { option: d.ate, optionLabel: opt?.label || '', note: cell.note || '', cheat: false, at: prev?.at || at, status: 'swapped', swappedFrom: was };
+      }
+    }
+    await saveWeek(weekStart, week);
+    await saveDay(date, meals);
+    s.close();
+    haptic(20);
+    render();
+    toast(moved ? 'Giornata salvata · settimana aggiornata' : 'Giornata salvata');
+  });
 }
 
 /* --- Inserimento e modifica dei pasti ------------------------------------ */
@@ -295,24 +526,6 @@ async function saveMeal(date, slotId, meal) {
   }
   notifyChange();
   if (meal) afterMeal(date, meal);
-}
-
-/** "Come da piano": un tocco e il pasto è segnato con la categoria prevista. */
-async function quickLog(slotId) {
-  const date = state.selected;
-  const planned = planForDate(date)[slotId];
-  const slot = SLOTS.find((s) => s.id === slotId);
-  let meal;
-  if (slot.main) {
-    meal = { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false, at: Date.now() };
-  } else {
-    const opt = plannedOption(date, slotId);
-    meal = { note: '', cheat: false, at: Date.now(), ...(opt ? { option: opt.id, optionLabel: opt.label } : {}) };
-  }
-  await saveMeal(date, slotId, meal);
-  haptic(15);
-  render();
-  warnIfNeeded(date, slotId);
 }
 
 /** Avvisa subito se il pasto appena segnato supera un limite. */
@@ -338,7 +551,7 @@ function warnIfNeeded(date, slotId) {
 function openMealSheet(slotId) {
   const date = state.selected;
   const slot = SLOTS.find((s) => s.id === slotId);
-  const planned = planForDate(date)[slotId];
+  const planned = plannedFor(date, slotId);
   const existing = state.days.get(date)?.meals?.[slotId] || null;
   // Colazione e spuntino: opzione prevista dal piano preselezionata
   const options = slot.main ? [] : slotOptions(slotId);
@@ -346,9 +559,9 @@ function openMealSheet(slotId) {
     ? { ...existing }
     : slot.main
       ? { category: planned.category, carbo: Boolean(planned.carbo), note: '', cheat: false }
-      : { option: plannedOption(date, slotId)?.id || null, note: '', cheat: false };
+      : { option: planned.option || plannedOption(date, slotId)?.id || null, note: '', cheat: false };
   // Pasto segnato prima delle opzioni ("come da piano"): si parte dall'opzione del piano
-  if (!slot.main && existing && !existing.option) draft.option = plannedOption(date, slotId)?.id || null;
+  if (!slot.main && existing && !existing.option) draft.option = planned.option || plannedOption(date, slotId)?.id || null;
   // Opzione non più presente nel piano: resta visibile per non perderla
   if (!slot.main && draft.option && !options.some((o) => o.id === draft.option)) {
     options.splice(options.length - 1, 0, { id: draft.option, label: draft.optionLabel || 'Opzione eliminata' });
@@ -364,7 +577,7 @@ function openMealSheet(slotId) {
     title: `${slot.label} · ${formatDay(date)}`,
     html: `
       <div class="plan-hint" style="margin-bottom:var(--s-4)">
-        ${icon('clipboard-list')}<span>Piano: ${esc(slot.main ? planned.text : planned)}</span>
+        ${icon('clipboard-list')}<span>In programma: ${esc(planned.text)}</span>
       </div>
       ${slot.main ? `
         <div class="field" data-what ${draft.cheat ? 'hidden' : ''}>
@@ -408,7 +621,7 @@ function openMealSheet(slotId) {
         body.querySelectorAll('[data-cat]').forEach((c) => c.classList.toggle('active', c.dataset.cat === draft.category));
       }
       if (!slot.main && !draft.option) {
-        draft.option = plannedOption(date, slotId)?.id || null;
+        draft.option = planned.option || plannedOption(date, slotId)?.id || null;
         body.querySelectorAll('[data-opt]').forEach((c) => c.classList.toggle('active', c.dataset.opt === draft.option));
       }
     }

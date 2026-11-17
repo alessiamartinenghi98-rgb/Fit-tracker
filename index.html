@@ -65,7 +65,10 @@
           </button>
         </div>
       </header>
-      <h1 class="large-title">Dieta</h1>
+      <div class="title-row">
+        <h1 class="large-title">Dieta</h1>
+        <button class="organize-btn" id="btn-organize"><i data-lucide="calendar-range"></i>Organizza settimana</button>
+      </div>
       <div id="diet-content"></div>
     </section>
 
@@ -80,6 +83,7 @@
 
     <!-- Editor dell'allenamento (vista a schermo intero, entra da destra) -->
     <section class="editor" id="workout-editor" aria-hidden="true"></section>
+    <section class="editor organizer" id="diet-organizer" aria-hidden="true"></section>
   </div>
 
   <!-- Barra delle schede -->

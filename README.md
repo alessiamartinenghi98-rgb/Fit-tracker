@@ -26,6 +26,11 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
 - **Dieta**: piano settimanale modificabile, opzioni di colazione e spuntino (modificabili),
   categorie di pranzo e cena con contatori e avvisi,
   sgarri, promemoria del carbo, settimane precedenti con riepilogo, regole e porzioni.
+- **Organizza settimana** (Dieta): calendario lunedì → domenica con colazione, pranzo e cena; i blocchi
+  (carne, uova, pesce, legumi, latticini, pasto libero e le colazioni) si trascinano o si toccano e
+  poi si mette la casella, con quanti ne restano; spunta del carbo e spazio per scrivere cosa mangerai;
+  "Copia settimana scorsa" e "Schema base". Ogni giorno: "Oggi come programmato?" Sì / No; con No,
+  per ogni pasto "Come previsto", "Invertito" (la settimana si riorganizza da sola) o "Sgarro".
 - **Progressi**: allenamenti per settimana/mese, grafici di peso, ripetizioni e volume per esercizio,
   backup JSON (esporta / importa).
 - **Report PDF per il personal trainer**: dalla sezione Progressi crei un PDF (4 o 8 settimane,
@@ -59,6 +64,8 @@ js/treadmill.js   Tapis roulant
 js/motivation.js  Frasi motivazionali e festeggiamenti
 js/report.js      Report PDF per il personal trainer (jsPDF, caricato solo quando serve)
 js/blocks.js      Blocchi di allenamento (settimana del blocco, scarico, schede archiviate)
+js/weekplan.js    Settimana organizzata della dieta (blocchi, carbo, testi, scambi)
+js/organizer.js   Schermata "Organizza settimana" (trascina o tocca i blocchi)
 js/progress.js    Progressi e grafici
 icons/            Icone dell'app
 ```
