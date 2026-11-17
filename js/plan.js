@@ -46,21 +46,19 @@ const DEFAULT_OPTIONS = {
     { id: 'ricotta', label: 'Ricotta + 2 gallette + frutti rossi' },
   ],
   spuntino: [
-    { id: 'yogurt-verdura', label: 'Yogurt bianco + verdura (carote o finocchi)' },
-    { id: 'frutta-verdura', label: '100 g frutta + verdura (carote o finocchi)' },
-    { id: 'verdura', label: 'Solo verdura (finocchi e carote)' },
+    { id: 'yogurt-bianco', label: 'Yogurt bianco' },
   ],
 };
 
 /* Opzione prevista dal piano per ogni giorno (lunedì → domenica) */
 const DEFAULT_DAY_OPTIONS = [
-  { colazione: 'caffe-bresaola', spuntino: 'yogurt-verdura' },
-  { colazione: 'yogurt-greco', spuntino: 'frutta-verdura' },
-  { colazione: 'yogurt-greco', spuntino: 'frutta-verdura' },
-  { colazione: 'caffe-bresaola', spuntino: 'yogurt-verdura' },
-  { colazione: 'ricotta', spuntino: 'verdura' },
-  { colazione: 'ricotta', spuntino: 'frutta-verdura' },
-  { colazione: 'caffe-uova', spuntino: 'yogurt-verdura' },
+  { colazione: 'caffe-bresaola', spuntino: 'yogurt-bianco' },
+  { colazione: 'yogurt-greco', spuntino: 'yogurt-bianco' },
+  { colazione: 'yogurt-greco', spuntino: 'yogurt-bianco' },
+  { colazione: 'caffe-bresaola', spuntino: 'yogurt-bianco' },
+  { colazione: 'ricotta', spuntino: 'yogurt-bianco' },
+  { colazione: 'ricotta', spuntino: 'yogurt-bianco' },
+  { colazione: 'caffe-uova', spuntino: 'yogurt-bianco' },
 ];
 
 /* --- Piano preimpostato -------------------------------------------------- */
@@ -72,43 +70,43 @@ export const DEFAULT_PLAN = {
   days: [
     { // Lunedì
       colazione: 'Caffè senza zucchero o dolcificato + 2 gallette + bresaola',
-      spuntino: 'Yogurt bianco + carote',
+      spuntino: 'Yogurt bianco',
       pranzo: main('carne', true, 'Carne + verdura + carbo (es. riso, pollo, finocchi)'),
       cena: main('uova', false, 'Uova + verdura (es. frittata con spinaci e zucchine, pane di lino)'),
     },
     { // Martedì
       colazione: 'Yogurt greco + eritritolo + 50 g frutti rossi',
-      spuntino: '100 g frutta + finocchi',
+      spuntino: 'Yogurt bianco',
       pranzo: main('latticino', true, 'Latticino + verdura + carbo (es. pane, primo sale, carote, zucchine)'),
       cena: main('pesce', false, 'Pesce + verdura (es. branzino, carote, pomodorini, pane di lino)'),
     },
     { // Mercoledì
       colazione: 'Yogurt greco + eritritolo + 50 g frutti rossi',
-      spuntino: '100 g frutta + carote',
+      spuntino: 'Yogurt bianco',
       pranzo: main('legumi', true, 'Legumi + verdura + carbo (es. pane, hamburger di ceci, verdure)'),
       cena: main('uova', false, 'Uova + verdura (es. uova strapazzate, fagiolini, pomodori)'),
     },
     { // Giovedì
       colazione: 'Caffè + 2 gallette + bresaola',
-      spuntino: 'Yogurt bianco + finocchi',
+      spuntino: 'Yogurt bianco',
       pranzo: main('carne', true, 'Carne + verdura + carbo (es. riso, pollo, finocchi)'),
       cena: main('uova', false, 'Uova + verdura (es. insalata con uova sode, cracker di semi)'),
     },
     { // Venerdì
       colazione: 'Ricotta + 2 gallette + 100 g frutti rossi',
-      spuntino: 'Finocchi + carote',
+      spuntino: 'Yogurt bianco',
       pranzo: main('latticino', true, 'Latticino + verdura + carbo (es. patate o pane, mozzarella)'),
       cena: main('carne', false, 'Carne + verdura (es. carpaccio, spinaci, zucchine)'),
     },
     { // Sabato
       colazione: 'Ricotta + 2 gallette + 50 g frutti rossi',
-      spuntino: '100 g frutta + finocchi',
+      spuntino: 'Yogurt bianco',
       pranzo: main('pesce', false, 'Pesce + verdura (es. insalatona con tonno, cracker di semi)'),
-      cena: main('libero', false, 'Pasto libero'),
+      cena: main('libero', false, 'Pasto libero (glutine)'),
     },
     { // Domenica
       colazione: 'Caffè + 2 gallette + uova',
-      spuntino: 'Yogurt bianco + finocchi',
+      spuntino: 'Yogurt bianco',
       pranzo: main('legumi', false, 'Legumi + verdura (es. piselli con verdure, cracker di semi)'),
       cena: main('pesce', true, 'Pesce + verdura + carbo (es. pasta con salmone e zucchine)'),
     },
@@ -153,6 +151,15 @@ export async function loadPlan() {
   plan.days.forEach((d, i) => {
     if (!d.options) d.options = { ...DEFAULT_DAY_OPTIONS[i] };
   });
+  // Dieta del 16/11/2026: lo spuntino è sempre yogurt bianco (una volta sola)
+  if (!plan.snackYogurt) {
+    const yogurt = { id: 'yogurt-bianco', label: 'Yogurt bianco' };
+    plan.options.spuntino = [yogurt, ...plan.options.spuntino.filter((o) => o.id !== yogurt.id && o.id !== 'yogurt-verdura'
+      && o.id !== 'frutta-verdura' && o.id !== 'verdura')];
+    plan.days.forEach((d) => { d.spuntino = yogurt.label; d.options.spuntino = yogurt.id; });
+    plan.snackYogurt = true;
+    await db.setMeta('dietPlan', plan);
+  }
   return plan;
 }
 

@@ -168,11 +168,11 @@ export async function isPersisted() {
 /* --- Backup: esportazione e importazione JSON --------------------------- */
 
 const BACKUP_APP = 'fit-tracker';
-const BACKUP_VERSION = 4; // v2: + schede · v3: + acqua, piano e diario della dieta · v4: + blocchi
+const BACKUP_VERSION = 5; // v2: + schede · v3: + acqua, piano e diario della dieta · v4: + blocchi · v5: + settimane della dieta
 
 /** Crea l'oggetto di backup con tutti i dati. */
 export async function exportData() {
-  const [exercises, workouts, meals, templates, water, dietDays, dietPlan, blocks, blockTemplates] = await Promise.all([
+  const [exercises, workouts, meals, templates, water, dietDays, dietPlan, blocks, blockTemplates, weekPlans] = await Promise.all([
     getAll('exercises'),
     getAll('workouts'),
     getAll('meals'),
@@ -182,12 +182,13 @@ export async function exportData() {
     getMeta('dietPlan'),
     getMeta('blocks'),
     getMeta('blockTemplates'),
+    getMeta('weekPlans'),
   ]);
   return {
     app: BACKUP_APP,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    data: { exercises, workouts, meals, templates, water, dietDays, dietPlan, blocks, blockTemplates },
+    data: { exercises, workouts, meals, templates, water, dietDays, dietPlan, blocks, blockTemplates, weekPlans },
   };
 }
 
@@ -200,7 +201,7 @@ export async function importData(backup) {
     throw new Error('Il file non è un backup di Fit Tracker.');
   }
   const {
-    exercises = [], workouts = [], meals = [], templates, water, dietDays, dietPlan, blocks, blockTemplates,
+    exercises = [], workouts = [], meals = [], templates, water, dietDays, dietPlan, blocks, blockTemplates, weekPlans,
   } = backup.data;
   const optional = [templates, water, dietDays].filter((x) => x !== undefined);
   if (![exercises, workouts, meals, ...optional].every(Array.isArray)) {
@@ -230,6 +231,7 @@ export async function importData(backup) {
     }
     const meta = t.objectStore('meta');
     if (dietPlan) meta.put({ key: 'dietPlan', value: dietPlan });
+    if (weekPlans && typeof weekPlans === 'object') meta.put({ key: 'weekPlans', value: weekPlans });
     if (withBlocks) {
       meta.put({ key: 'blocks', value: blocks });
       meta.put({ key: 'blockTemplates', value: blockTemplates || {} });
