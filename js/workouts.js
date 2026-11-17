@@ -16,8 +16,12 @@ import {
 } from './ui.js';
 import {
   seedTemplates, loadTemplates, strengthTemplates, cardioTemplate, getTemplate,
-  repRange, targetText, notesHTML, UNIT_SHORT, renameExerciseInTemplates, openTemplatesManager,
+  repRange, targetText, restText, notesHTML, UNIT_SHORT, renameExerciseInTemplates, openTemplatesManager,
+  migrateToBlock2,
 } from './templates.js';
+import {
+  loadBlocks, getBlocks, blockForDate, currentBlock, blockWeek, isDeloadWeek, blockEnd, setBlockStart,
+} from './blocks.js';
 import { loadTimerSetting, isTimerEnabled, setTimerEnabled, startRest, stopRest } from './timer.js';
 import {
   mountTreadmill, lastTreadmill, defaultTreadmill, treadmillToSave, treadmillText, hasTreadmill,
@@ -216,6 +220,45 @@ function lastPerformance(exerciseId, current) {
   return null;
 }
 
+/** Peso leggibile: "17,5"; 0 o vuoto in un esercizio a corpo libero = "CL". */
+export function weightText(weight, bodyweight = false) {
+  if (bodyweight && !weight) return 'CL';
+  return fmtNum(weight || 0);
+}
+
+/**
+ * Massimo storico di un esercizio (prima dell'allenamento aperto):
+ * il peso più alto e, a quel peso, il maggior numero di ripetizioni.
+ * Restituisce { weight, reps, date } oppure null.
+ */
+function bestPerformance(exerciseId, current) {
+  let best = null;
+  for (const w of state.workouts) {
+    if (isActive(w)) continue;
+    if (current && (w.id === current.id || w.date > current.date)) continue;
+    for (const entry of w.exercises || []) {
+      if (entry.exerciseId !== exerciseId) continue;
+      for (const st of completedSets(entry)) {
+        const weight = st.weight || 0;
+        if (!best || weight > best.weight || (weight === best.weight && st.reps > best.reps)) {
+          best = { weight, reps: st.reps, date: w.date };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/** Il carico di partenza si mostra finché l'esercizio non è stato fatto nel blocco. */
+function showStartHint(entry, current) {
+  if (!entry.start) return false;
+  const block = blockForDate(current.date);
+  if (!block) return true;
+  return !state.workouts.some((w) => !isActive(w) && w.id !== current.id && w.date >= block.start
+    && w.date <= current.date
+    && (w.exercises || []).some((e) => e.exerciseId === entry.exerciseId && completedSets(e).length));
+}
+
 /**
  * Regola di progressione: se l'ultima volta tutte le serie fatte erano al massimo
  * delle ripetizioni (es. 8 su 6-8), è ora di aumentare. Contano solo le serie
@@ -237,7 +280,8 @@ function shouldIncrease(entry, current) {
 export async function initWorkouts() {
   await seedExercises();
   await seedTemplates();
-  await Promise.all([loadTemplates(), loadTimerSetting()]);
+  await migrateToBlock2();
+  await Promise.all([loadTemplates(), loadTimerSetting(), loadBlocks()]);
   await load();
   renderList();
 
@@ -250,6 +294,7 @@ export async function initWorkouts() {
     if (action === 'resume') return resumeActive();
     if (action === 'free') return openActivitySheet();
     if (action === 'edit-templates') return openTemplatesManager();
+    if (action === 'block') return openBlockSheet();
     const tpl = e.target.closest('[data-template]');
     if (tpl) return startTemplate(tpl.dataset.template);
     const card = e.target.closest('[data-workout]');
@@ -261,6 +306,9 @@ export async function initWorkouts() {
       openEditor(structuredClone(w));
     }
   });
+
+  // Data di inizio del blocco cambiata: settimane e scarico si ricalcolano
+  document.addEventListener('blocks-changed', () => { renderList(); notifyChange(); });
 
   // Le schede modificate si riflettono subito nella lista
   document.addEventListener('templates-changed', async () => {
@@ -281,7 +329,8 @@ export async function initWorkouts() {
 
 /** Ricarica i dati (es. dopo un'importazione) e ridisegna. */
 export async function refreshWorkouts() {
-  await loadTemplates();
+  await migrateToBlock2(); // un backup vecchio importato passa anche lui al nuovo blocco
+  await Promise.all([loadTemplates(), loadBlocks()]);
   await load();
   renderList();
 }
@@ -296,9 +345,12 @@ function renderList() {
   // Allenamento in corso
   if (active) html += activeBanner(active);
 
+  // Blocco in corso: "Settimana X di 6"
+  html += blockCard();
+
   // Schede
   html += `
-    <div class="section-label" ${active ? '' : 'style="margin-top:0"'}>
+    <div class="section-label" ${active || currentBlock() ? '' : 'style="margin-top:0"'}>
       <span>Schede</span>
       <button class="btn-ghost link-btn" data-action="edit-templates">${icon('pencil')} Modifica</button>
     </div>
@@ -357,6 +409,76 @@ function renderList() {
   }
 
   root.innerHTML = html;
+}
+
+/** Card del blocco: settimana corrente su 6 e avviso della settimana di scarico. */
+function blockCard() {
+  const b = currentBlock();
+  if (!b || !b.weeks) return '';
+  const week = blockWeek(b);
+  const deload = isDeloadWeek(b, week);
+  const over = week > b.weeks;
+  const segs = Array.from({ length: b.weeks }, (_, i) =>
+    `<i class="${i + 1 < week || over ? 'done' : i + 1 === week ? 'now' : ''} ${i + 1 === b.weeks ? 'deload' : ''}"></i>`).join('');
+  const sub = over
+    ? `Blocco finito da ${week - b.weeks} ${week - b.weeks === 1 ? 'settimana' : 'settimane'} · tocca per i dettagli`
+    : deload
+      ? 'Settimana di scarico: una serie in meno per esercizio'
+      : `Iniziato ${formatShortDate(b.start)} · scarico nella settimana ${b.weeks}`;
+  return `
+    <button class="card card-tap block-card ${deload ? 'deload' : ''}" data-action="block" ${getActiveWorkout() ? '' : 'style="margin-top:0"'}>
+      <span class="row-main">
+        <span class="block-top"><span class="row-title">${esc(b.name)}</span>
+          <span class="block-week num">${over ? 'Concluso' : `Settimana ${week} di ${b.weeks}`}</span></span>
+        <span class="block-segs">${segs}</span>
+        <span class="row-sub">${esc(sub)}</span>
+      </span>
+      <span class="row-trail">${icon('chevron-right')}</span>
+    </button>`;
+}
+
+/** Foglio del blocco: date, settimane e cambio della data di inizio. */
+function openBlockSheet() {
+  const b = currentBlock();
+  if (!b) return;
+  const list = getBlocks();
+  const prev = list[list.findIndex((x) => x.id === b.id) - 1];
+  const rows = list.slice().reverse().map((x) => {
+    const end = blockEnd(x);
+    const count = state.workouts.filter((w) => isStrength(w) && w.date >= x.start && (!end || w.date <= end)).length;
+    return `
+      <div class="list-row">
+        <span class="row-icon ${x.id === b.id ? 'accent' : ''}">${icon(x.id === b.id ? 'play' : 'archive')}</span>
+        <span class="row-main"><span class="row-title">${esc(x.name)}</span>
+        <span class="row-sub">${esc(formatShortDate(x.start))}${end ? ` – ${esc(formatShortDate(end))}` : ' · in corso'} · ${count} ${count === 1 ? 'allenamento' : 'allenamenti'}</span></span>
+      </div>`;
+  }).join('');
+  const s = openSheet({
+    title: b.name,
+    html: `
+      <label class="field">
+        <span class="field-label">Data di inizio</span>
+        <input class="input" type="date" data-start value="${b.start}" ${prev ? `min="${addDays(prev.start, 1)}"` : ''}>
+      </label>
+      <p class="footnote" style="margin-top:0;margin-bottom:var(--s-4)">
+        Durata ${b.weeks} settimane: la settimana 1 è quella che contiene la data di inizio.
+        Nella settimana ${b.weeks} (scarico) ogni esercizio delle schede A–D ha una serie in meno.
+        Gli allenamenti fatti prima di questa data restano nel blocco precedente.
+      </p>
+      <div class="list">${rows}</div>
+      <div class="sheet-actions">
+        <button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button>
+      </div>`,
+  });
+  $('[data-save]', s.body).addEventListener('click', async () => {
+    const v = $('[data-start]', s.body).value;
+    if (!v) return toast('Scegli una data', { error: true });
+    if (v === b.start) return s.close();
+    const ok = await setBlockStart(b.id, v);
+    if (!ok) return toast('La data deve essere dopo l\'inizio del blocco precedente', { error: true });
+    s.close();
+    toast('Data di inizio aggiornata');
+  });
 }
 
 /** Riquadro "Allenamento in corso" (usato anche nella Home). */
@@ -430,6 +552,7 @@ function cardioCard(w) {
         </div>
         <div class="wc-date">${esc(formatDay(w.date))}</div>
       </div>
+      ${w.cardio ? `<div class="wc-ex"><span>${esc(cardioDetails(w))}</span></div>` : ''}
       ${treadmillLine(w)}
     </article>`;
 }
@@ -547,6 +670,13 @@ export async function startTemplate(templateId, { date } = {}) {
     startedAt: now,
     updatedAt: now,
   };
+  // Blocco e settimana: nella settimana di scarico una serie in meno
+  const block = blockForDate(w.date);
+  if (block) {
+    w.blockId = block.id;
+    w.blockWeek = blockWeek(block, w.date);
+    if (isDeloadWeek(block, w.blockWeek)) w.deload = true;
+  }
   w.exercises = t.exercises.map((te) => entryFromTemplate(te, w));
   await db.put('workouts', w);
   state.workouts.unshift(w);
@@ -559,17 +689,25 @@ export async function startTemplate(templateId, { date } = {}) {
 /** Esercizio della scheda → voce dell'allenamento con le serie precompilate. */
 function entryFromTemplate(te, workout) {
   const last = lastPerformance(te.exerciseId, workout);
-  const sets = Array.from({ length: te.sets }, (_, i) => {
-    // Peso usato l'ultima volta nella stessa serie (o nell'ultima disponibile)
+  const nSets = workout.deload ? Math.max(1, te.sets - 1) : te.sets;
+  const sets = Array.from({ length: nSets }, (_, i) => {
+    // Peso usato l'ultima volta nella stessa serie (o nell'ultima disponibile);
+    // la prima volta, il carico di partenza consigliato
     const ls = last ? (last.sets[i] || last.sets[last.sets.length - 1]) : null;
-    return { weight: ls ? ls.weight : null, reps: null, done: false };
+    const weight = ls ? ls.weight : te.bodyweight ? null : te.startKg ?? null;
+    return { weight: te.bodyweight && !weight ? null : weight, reps: null, done: false };
   });
   const entry = {
     exerciseId: te.exerciseId,
     name: te.name,
-    target: { sets: te.sets, repMin: te.repMin, repMax: te.repMax, unit: te.unit || '' },
+    target: {
+      sets: nSets, repMin: te.repMin, repMax: te.repMax, unit: te.unit || '',
+      ...(te.max ? { max: true } : {}), ...(te.bodyweight ? { bodyweight: true } : {}),
+    },
     sets,
   };
+  // Indicazioni della scheda (recupero, nota, partenza, superserie)
+  for (const k of ['rest', 'restLabel', 'note', 'start', 'superset']) if (te[k]) entry[k] = te[k];
   // Ricorda se c'era il suggerimento "Aumenta il peso" (per festeggiarlo se seguito)
   if (shouldIncrease(entry, workout)) entry.increaseHint = true;
   return entry;
@@ -613,7 +751,7 @@ export function openActivitySheet(existing = null, { date } = {}) {
         <textarea class="input" data-note rows="2" maxlength="200" placeholder="Es. 5 km al parco, ritmo tranquillo">${esc(draft.note)}</textarea>
       </label>
       <div data-tm-wrap style="margin-bottom:var(--s-3)"></div>
-      <p class="footnote" style="margin-top:0">Conta per il calendario della Home, non per l'obiettivo dei 4 allenamenti settimanali.</p>
+      <p class="footnote" style="margin-top:0">Chiude l'anello Allenamento della giornata; non conta per l'obiettivo dei 4 allenamenti settimanali.</p>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-save>${icon('check')} ${existing ? 'Salva modifiche' : 'Registra allenamento'}</button>
         ${existing ? `<button class="btn btn-danger btn-block" data-delete>${icon('trash-2')} Elimina</button>` : ''}
@@ -678,27 +816,120 @@ export function openActivitySheet(existing = null, { date } = {}) {
 
 /* --- Cardio: basta segnarlo come fatto ---------------------------------- */
 
+/** Programma del cammina-corri per la settimana del blocco. */
+function cardioPlan(week) {
+  if (!week || week > 6) return { run: 'Cammina-corri', circuit: true };
+  if (week === 6) return { run: "5 × (2' corsa + 2' camminata) · niente circuito", circuit: false };
+  if (week === 5) return { run: "4 × (5' corsa + 1'30\" camminata)", circuit: true };
+  if (week >= 3) return { run: "6 × (3' corsa + 1'30\" camminata)", circuit: true };
+  return { run: "6 × (2' corsa + 2' camminata)", circuit: true };
+}
+
+const CIRCUIT_ROUNDS = 3;
+
+/** "Cammina-corri · circuito 3/3 · kettlebell 12 kg" per storico e report. */
+export function cardioDetails(w) {
+  const c = w.cardio;
+  if (!c) return '';
+  const parts = [];
+  if (c.run) parts.push('Cammina-corri fatto');
+  if (c.rounds) parts.push(`circuito ${c.rounds}/${CIRCUIT_ROUNDS} giri`);
+  if (c.kettlebell) parts.push(`kettlebell ${fmtNum(c.kettlebell)} kg`);
+  if (c.farmer) parts.push(`farmer walk ${fmtNum(c.farmer)} kg`);
+  const text = parts.join(' · ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Spunte facoltative del cardio: cammina-corri, giri del circuito e kg. */
+function cardioFieldsHTML(c, date) {
+  const block = blockForDate(date);
+  const week = block ? blockWeek(block, date) : null;
+  const plan = cardioPlan(block?.weeks ? week : null);
+  const kgField = (key, label) => `
+    <label class="field">
+      <span class="field-label">${label} <span class="opt">· kg facolt.</span></span>
+      <input class="input num" data-kg="${key}" type="text" inputmode="decimal" value="${fmtNum(c[key])}" placeholder="–" autocomplete="off">
+    </label>`;
+  return `
+    <div class="section-label" style="margin-top:var(--s-4)">Com'è andata <span class="opt">facoltativo</span></div>
+    <div class="list switch-list" style="margin-bottom:var(--s-3)">
+      <label class="switch-row">
+        <span class="row-main"><span class="row-title">Cammina-corri completato</span>
+        <span class="row-sub">${week && block?.weeks && week <= block.weeks ? `Settimana ${week} · ` : ''}${esc(plan.run)}</span></span>
+        <input type="checkbox" class="switch" data-run ${c.run ? 'checked' : ''}>
+      </label>
+    </div>
+    ${plan.circuit || c.rounds ? `
+      <div class="field">
+        <span class="field-label">Circuito · giri fatti</span>
+        <div class="chips" data-rounds>
+          ${Array.from({ length: CIRCUIT_ROUNDS }, (_, i) => `
+            <button class="chip ${i < (c.rounds || 0) ? 'active' : ''}" data-r="${i + 1}">${icon('check')}Giro ${i + 1}</button>`).join('')}
+        </div>
+      </div>
+      <div class="grid-2">${kgField('kettlebell', 'Kettlebell')}${kgField('farmer', 'Farmer walk')}</div>` : ''}`;
+}
+
+/** Collega le spunte del cardio al valore c (modificato direttamente). */
+function bindCardioFields(body, c) {
+  body.addEventListener('change', (e) => {
+    if (e.target.matches('[data-run]')) { c.run = e.target.checked; haptic(5); }
+  });
+  body.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-r]');
+    if (!chip) return;
+    const r = Number(chip.dataset.r);
+    c.rounds = c.rounds === r ? r - 1 : r;
+    body.querySelectorAll('[data-r]').forEach((b) => b.classList.toggle('active', Number(b.dataset.r) <= c.rounds));
+    haptic(5);
+  });
+  body.addEventListener('input', (e) => {
+    const key = e.target.dataset?.kg;
+    if (key) c[key] = parseNum(e.target.value);
+  });
+}
+
+/** Salva le spunte nell'allenamento solo se ce n'è almeno una. */
+function applyCardio(w, c) {
+  const clean = {
+    run: Boolean(c.run), rounds: c.rounds || 0,
+    kettlebell: c.kettlebell || null, farmer: c.farmer || null,
+  };
+  if (clean.run || clean.rounds || clean.kettlebell || clean.farmer) w.cardio = clean;
+  else delete w.cardio;
+}
+
+/** Valori iniziali: i kg dell'ultima volta, spunte vuote. */
+function defaultCardio() {
+  const last = state.workouts.find((w) => isCardio(w) && w.cardio && (w.cardio.kettlebell || w.cardio.farmer));
+  return { run: false, rounds: 0, kettlebell: last?.cardio.kettlebell ?? null, farmer: last?.cardio.farmer ?? null };
+}
+
 export function openCardioSheet(t, { date } = {}) {
   const today = safeDate(date);
   const doneToday = state.workouts.some((w) => isCardio(w) && w.date === today);
+  const cardioDraft = defaultCardio();
   const s = openSheet({
     title: t.name,
     html: `
       <div class="card notes-card">${notesHTML(t.notes)}</div>
+      ${cardioFieldsHTML(cardioDraft, today)}
       <div data-tm-wrap style="margin-top:var(--s-3)"></div>
-      <p class="footnote">Facoltativo: non conta nell'obiettivo dei 4 allenamenti settimanali.</p>
+      <p class="footnote">Facoltativo: non conta nell'obiettivo dei 4 allenamenti settimanali, ma chiude l'anello Allenamento della giornata.</p>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-done>${icon('check')} ${doneToday ? 'Segna di nuovo come fatto' : 'Segna come fatto'}</button>
         <button class="btn btn-secondary btn-block" data-close>Chiudi</button>
       </div>`,
   });
   const tmValue = sheetTreadmill(s.body, null);
+  bindCardioFields(s.body, cardioDraft);
   $('[data-done]', s.body).addEventListener('click', async () => {
     const now = Date.now();
     const w = {
       id: db.uid(), date: today, name: t.name, kind: 'cardio', templateId: t.id,
       templateCode: t.code, status: 'done', exercises: [], createdAt: now, updatedAt: now, finishedAt: now,
     };
+    applyCardio(w, cardioDraft);
     applyTreadmill(w, tmValue);
     await db.put('workouts', w);
     state.workouts.unshift(w);
@@ -727,6 +958,7 @@ export function openWorkoutRecord(id) {
 }
 
 function openCardioRecord(w) {
+  const cardioDraft = { run: false, rounds: 0, kettlebell: null, farmer: null, ...(w.cardio || {}) };
   const s = openSheet({
     title: w.name || 'Cardio',
     html: `
@@ -734,6 +966,7 @@ function openCardioRecord(w) {
         <span class="field-label">Data</span>
         <input class="input" type="date" data-date value="${w.date}" max="${todayISO()}">
       </label>
+      ${cardioFieldsHTML(cardioDraft, w.date)}
       <div data-tm-wrap></div>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button>
@@ -741,9 +974,11 @@ function openCardioRecord(w) {
       </div>`,
   });
   const tmValue = sheetTreadmill(s.body, w);
+  bindCardioFields(s.body, cardioDraft);
   $('[data-save]', s.body).addEventListener('click', async () => {
     const date = $('[data-date]', s.body).value;
     if (date) w.date = safeDate(date);
+    applyCardio(w, cardioDraft);
     applyTreadmill(w, tmValue);
     w.updatedAt = Date.now();
     await db.put('workouts', w);
@@ -861,55 +1096,106 @@ function renderExercises(newIndex = -1) {
       })}</div>`;
     return;
   }
-  list.innerHTML = entries.map((e, i) => exerciseCard(e, i, i === newIndex)).join('');
+  // Superserie: esercizi consecutivi con lo stesso gruppo, in un unico riquadro
+  let html = '';
+  for (let i = 0; i < entries.length; i++) {
+    const group = supersetRange(entries, i);
+    if (group) {
+      const [from, to] = group;
+      const rest = restText(entries[to]);
+      html += `
+        <div class="superset" data-ss="${from}">
+          <div class="ss-head">${icon('repeat-2')}<span><b>Superserie</b> · alterna le serie${rest ? ` · recupero ${esc(rest)} dopo la coppia` : ''}</span></div>
+          ${entries.slice(from, to + 1).map((e, k) => exerciseCard(e, from + k, from + k === newIndex, `${k + 1}`)).join('')}
+        </div>`;
+      i = to;
+    } else {
+      html += exerciseCard(entries[i], i, i === newIndex);
+    }
+  }
+  list.innerHTML = html;
+}
+
+/** [primo, ultimo] della superserie che inizia in i (almeno 2 esercizi), altrimenti null. */
+function supersetRange(entries, i) {
+  const id = entries[i]?.superset;
+  if (!id || entries[i - 1]?.superset === id) return null;
+  let to = i;
+  while (entries[to + 1]?.superset === id) to++;
+  return to > i ? [i, to] : null;
+}
+
+/** La superserie che contiene l'esercizio i: [primo, ultimo] oppure null. */
+function supersetOf(entries, i) {
+  let from = i;
+  const id = entries[i]?.superset;
+  if (!id) return null;
+  while (entries[from - 1]?.superset === id) from--;
+  return supersetRange(entries, from);
 }
 
 /** Ridisegna una sola card (senza toccare le altre). */
 function rerenderCard(i) {
   const card = $(`.ex-card[data-ex="${i}"]`);
-  if (card) card.outerHTML = exerciseCard(state.current.exercises[i], i, false);
+  if (!card) return;
+  const ss = supersetOf(state.current.exercises, i);
+  card.outerHTML = exerciseCard(state.current.exercises[i], i, false, ss ? `${i - ss[0] + 1}` : '');
 }
 
-function exerciseCard(entry, i, isNew) {
+function exerciseCard(entry, i, isNew, ssTag = '') {
   const t = entry.target;
+  const bw = Boolean(t?.bodyweight);
   const last = lastPerformance(entry.exerciseId, state.current);
+  const best = bestPerformance(entry.exerciseId, state.current);
   let ref;
   if (last) {
-    const sets = last.sets.slice(0, 4).map((s) => `${fmtNum(s.weight || 0)}×${s.reps}`).join(' · ');
+    const sets = last.sets.slice(0, 4).map((s) => `${weightText(s.weight, bw)}×${s.reps}`).join(' · ');
     const more = last.sets.length > 4 ? ' …' : '';
     ref = `${icon('history')}<span>Ultima volta ${esc(formatShortDate(last.date))} · <b class="num">${sets}${more}</b></span>`;
   } else {
     ref = `${icon('sparkles')}<span>Prima volta: nessun riferimento</span>`;
   }
+  const bestLine = best
+    ? `<div class="ex-ref">${icon('trophy')}<span>Massimo storico · <b class="num">${bw && !best.weight ? 'CL' : `${fmtNum(best.weight)} kg`} × ${best.reps}</b> · ${esc(formatShortDate(best.date))}</span></div>`
+    : '';
+  const rest = restText(entry);
+  const meta = [
+    t ? `${icon('target')}<span>Obiettivo <b>${esc(targetText(t))}</b></span>` : '',
+    rest ? `<span class="ex-rest">${icon('timer')}<span>${esc(rest)}</span></span>` : '',
+  ].join('');
 
   const increase = shouldIncrease(entry, state.current);
   const unit = t ? UNIT_SHORT[t.unit || ''] : '';
+  const startHint = showStartHint(entry, state.current);
 
   return `
     <div class="card ex-card" data-ex="${i}" ${isNew ? '' : 'style="animation:none"'}>
       <div class="ex-head">
         <div style="min-width:0">
-          <div class="ex-name">${esc(exerciseName(entry))}</div>
-          ${t ? `<div class="ex-target num">${icon('target')}<span>Obiettivo <b>${esc(targetText(t))}</b></span></div>` : ''}
+          <div class="ex-name">${ssTag ? `<span class="ss-tag">${ssTag}</span>` : ''}${esc(exerciseName(entry))}</div>
+          ${meta ? `<div class="ex-target num">${meta}</div>` : ''}
           <div class="ex-ref">${ref}</div>
-          ${increase ? `<div class="hint-pill">${icon('trending-up')} Aumenta il peso</div>` : ''}
+          ${bestLine}
+          ${entry.note ? `<div class="ex-note">${esc(entry.note)}</div>` : ''}
+          ${startHint ? `<div class="hint-pill start">${icon('flag')} Partenza consigliata: ${esc(entry.start)}</div>` : ''}
+          ${increase ? `<div class="hint-pill">${icon('trending-up')} ${bw ? 'Pronto a progredire' : 'Aumenta il peso'}</div>` : ''}
         </div>
         <button class="ex-menu" data-action="ex-menu" aria-label="Opzioni esercizio">${icon('ellipsis')}</button>
       </div>
-      <div class="sets-head"><span>Serie</span><span>Kg</span><span>Rep${unit ? ` /${unit}` : ''}</span><span></span></div>
+      <div class="sets-head"><span>Serie</span><span>${bw ? 'Kg facolt.' : 'Kg'}</span><span>Rep${unit ? ` /${unit}` : ''}</span><span></span></div>
       <div class="sets">${entry.sets.map((s, j) => setRow(s, j, t)).join('')}</div>
       <button class="add-set" data-action="add-set">${icon('plus')} Aggiungi serie</button>
     </div>`;
 }
 
 function setRow(s, j, target) {
-  const repsHint = target ? repRange(target.repMin, target.repMax) : '–';
+  const repsHint = target ? (target.max ? 'max' : repRange(target.repMin, target.repMax)) : '–';
   return `
     <div class="set-wrap" data-set="${j}">
       <div class="set-delete">${icon('trash-2')} Elimina</div>
       <div class="set-row ${s.done ? 'done' : ''}">
         <div class="set-num num">${j + 1}</div>
-        ${stepper('weight', s.weight, 'decimal', '–')}
+        ${stepper('weight', s.weight, 'decimal', target?.bodyweight ? 'CL' : '–')}
         ${stepper('reps', s.reps, 'numeric', repsHint)}
         <button class="set-check" data-action="toggle-set" aria-label="Completa serie">${icon('check')}</button>
       </div>
@@ -1203,10 +1489,26 @@ function toggleSet(exIndex, setIndex) {
     void row.offsetWidth; // fa ripartire l'animazione
     row.classList.add('just-done');
     haptic(15);
-    // Recupero: più lungo dopo il primo esercizio della scheda
-    startRest(exIndex === 0 ? REST_FIRST : REST_OTHERS);
+    const rest = restAfterSet(exIndex);
+    if (rest) startRest(rest); else stopRest();
   }
   saveNow(); // ogni serie è salvata subito
+}
+
+/**
+ * Recupero dopo una serie: quello dell'esercizio (dalla scheda), altrimenti
+ * più lungo dopo il primo esercizio. In superserie si passa subito al
+ * successivo della coppia e il recupero parte dopo l'ultimo.
+ */
+function restAfterSet(exIndex) {
+  const entries = state.current.exercises;
+  const entry = entries[exIndex];
+  const ss = supersetOf(entries, exIndex);
+  if (ss && exIndex < ss[1]) {
+    toast(`Ora ${exerciseName(entries[exIndex + 1])}`);
+    return null;
+  }
+  return entry.rest || (exIndex === 0 ? REST_FIRST : REST_OTHERS);
 }
 
 function removeSet(exIndex, setIndex) {

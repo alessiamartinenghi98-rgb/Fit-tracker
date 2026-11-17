@@ -14,6 +14,11 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
   con chiusura come parziale (conta nell'obiettivo, mezza lettera nella Home, "Parziale 14/20"),
   tapis roulant dopo l'allenamento (minuti, velocità, pendenza, miglioramento sull'ultima volta),
   allenamento libero (corsa, nuoto, camminata, bici, altro), libreria esercizi, storico modificabile.
+- **Blocchi**: le schede sono organizzate in blocchi (Blocco 1 archiviato, Blocco 2 di 6 settimane dal
+  17 novembre 2026, data modificabile). "Settimana X di 6", scarico nella settimana 6 (una serie in meno),
+  superserie, esercizi a corpo libero (kg facoltativi), recupero e nota per esercizio, carico di partenza
+  consigliato fino alla prima sessione del blocco, ultima volta e massimo storico su ogni esercizio.
+  Cardio del sabato con spunte facoltative (cammina-corri, giri del circuito, kg).
 - **Dieta**: piano settimanale modificabile, opzioni di colazione e spuntino (modificabili),
   categorie di pranzo e cena con contatori e avvisi,
   sgarri, promemoria del carbo, settimane precedenti con riepilogo, regole e porzioni.
@@ -49,6 +54,7 @@ js/water.js       Contatore acqua
 js/treadmill.js   Tapis roulant
 js/motivation.js  Frasi motivazionali e festeggiamenti
 js/report.js      Report PDF per il personal trainer (jsPDF, caricato solo quando serve)
+js/blocks.js      Blocchi di allenamento (settimana del blocco, scarico, schede archiviate)
 js/progress.js    Progressi e grafici
 icons/            Icone dell'app
 ```

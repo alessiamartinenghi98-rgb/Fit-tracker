@@ -8,57 +8,69 @@
    ========================================================================== */
 
 import * as db from './db.js';
-import { $, esc, icon, toast, haptic, openSheet, confirmSheet, initSeg } from './ui.js';
+import { $, esc, icon, toast, haptic, openSheet, confirmSheet, initSeg, todayISO } from './ui.js';
 import { pickExercise } from './workouts.js';
+import { saveBlocks } from './blocks.js';
 
-/* --- Schede preimpostate --------------------------------------------------
-   Ogni esercizio: [nome, serie, rip. minime, rip. massime, lato]
-   lato: '' = normale, 'g' = per gamba, 'b' = per braccio                    */
+/* --- Schede preimpostate (Blocco 2) ---------------------------------------
+   ex(nome, serie, rip. minime, rip. massime, opzioni)
+   opzioni:
+   - unit: '' = normale, 'g' = per gamba, 'b' = per braccio
+   - rest: recupero in secondi (per il timer) · restLabel: testo, es. "2-3'"
+   - start: carico di partenza consigliato (testo) · startKg: numero per precompilare
+   - note: consiglio tecnico · bodyweight: corpo libero (kg facoltativi)
+   - max: ripetizioni al massimo, es. "max (6–10)" · superset: id della coppia     */
+const ex = (name, sets, repMin, repMax, o = {}) => ({
+  name, sets, repMin, repMax, unit: o.unit || '', rest: o.rest || 75, restLabel: o.restLabel || '',
+  start: o.start || '', startKg: o.startKg ?? null, note: o.note || '',
+  bodyweight: Boolean(o.bodyweight), max: Boolean(o.max), superset: o.superset || '',
+});
+
 const SEED = [
   {
     id: 'tpl-a', code: 'A', name: 'Glutei A', kind: 'strength',
     exercises: [
-      ['Hip thrust', 4, 6, 8, ''],
-      ['Stacchi rumeni manubri', 3, 8, 10, ''],
-      ['Affondi bulgari', 3, 8, 8, 'g'],
-      ['Kickback cavo', 3, 10, 12, 'g'],
-      ['Abductor busto avanti', 3, 12, 12, ''],
-      ['Calf in piedi', 2, 12, 12, ''],
+      ex('Hip thrust', 4, 6, 8, { rest: 150, restLabel: "2-3'", start: '82,5–85 kg', startKg: 82.5, note: '1 secondo di stretta in alto' }),
+      ex('Stacchi rumeni manubri', 3, 8, 10, { rest: 120, restLabel: "2'", start: '18 kg', startKg: 18, note: 'Ginocchia morbide, sedere indietro, schiena dritta' }),
+      ex('Affondi bulgari', 3, 8, 8, { unit: 'g', rest: 90, restLabel: '90"', start: '12 kg', startKg: 12, note: 'Piede davanti lontano dalla panca, busto inclinato, spingi dal tallone' }),
+      ex('Kickback cavo', 3, 10, 12, { unit: 'g', rest: 60, restLabel: '60"', start: '7,5–9 kg', startKg: 7.5, note: 'Ultima serie + ripetizioni extra a carico dimezzato' }),
+      ex('Abductor busto avanti', 3, 12, 12, { rest: 60, restLabel: '60"', start: '27,5 kg', startKg: 27.5, note: 'Tieni aperto 1 secondo' }),
+      ex('Calf in piedi', 2, 12, 12, { rest: 60, restLabel: '60"', start: 'Manubrio in mano' }),
     ],
   },
   {
-    id: 'tpl-b', code: 'B', name: 'Schiena + bicipiti', kind: 'strength',
+    id: 'tpl-b', code: 'B', name: 'Schiena + braccia', kind: 'strength',
     exercises: [
-      ['Lat prona larga', 4, 8, 10, ''],
-      ['Rematore manubrio', 3, 8, 10, 'b'],
-      ['Pulley triangolo', 3, 10, 10, ''],
-      ['Lat singola maniglia', 3, 10, 10, 'b'],
-      ['Reverse fly', 3, 12, 12, ''],
-      ['Curl panca inclinata', 3, 10, 10, ''],
-      ['Curl cavo basso', 2, 12, 12, ''],
+      ex('Lat prona larga', 4, 8, 10, { rest: 120, restLabel: "2'", start: '27 kg', startKg: 27, note: 'Sbarra al petto, gomiti verso i fianchi' }),
+      ex('Rematore manubrio', 3, 8, 10, { unit: 'b', rest: 90, restLabel: '90"', start: '12 kg', startKg: 12, note: "Gomito verso l'anca" }),
+      ex('Pulley triangolo', 3, 10, 10, { rest: 90, restLabel: '90"', start: '25 kg', startKg: 25, note: 'Petto in fuori, 1 secondo di stretta' }),
+      ex('Lat singola maniglia', 3, 10, 10, { unit: 'b', rest: 75, restLabel: '60-90"', start: '10 kg', startKg: 10, note: 'Seduta di lato' }),
+      ex('Curl bilanciere EZ', 3, 8, 10, { rest: 90, restLabel: '90"', note: 'Gomiti fermi', superset: 'ss-b' }),
+      ex('Dip su panca', 3, 8, 12, { rest: 90, restLabel: '90"', start: 'Corpo libero', bodyweight: true, note: 'Mani sulla panca dietro, gambe piegate', superset: 'ss-b' }),
+      ex('Curl cavo basso', 2, 12, 12, { rest: 60, restLabel: '60"', start: '6,5 kg', startKg: 6.5 }),
     ],
   },
   {
     id: 'tpl-c', code: 'C', name: 'Glutei B + femorali', kind: 'strength',
     exercises: [
-      ['Stacchi rumeni multipower', 4, 6, 8, ''],
-      ['Step up busto avanti', 3, 8, 8, 'g'],
-      ['Iperestensioni 45°', 3, 10, 12, ''],
-      ['Leg curl seduto', 3, 10, 10, ''],
-      ['Slanci laterali cavo', 3, 12, 12, 'g'],
-      ['Calf in piedi', 2, 12, 12, ''],
+      ex('Stacco rumeno con bilanciere', 3, 6, 8, { rest: 150, restLabel: "2-3'", start: '30–35 kg', startKg: 30, note: 'Bilanciere vicino alle gambe, sedere indietro' }),
+      ex('Pressa monopodalica', 3, 10, 10, { unit: 'g', rest: 90, restLabel: '90"', note: "Piede alto e un po' largo sulla pedana, spingi dal tallone" }),
+      ex('Stacco rumeno monopodalico con manubrio', 3, 8, 8, { unit: 'g', rest: 90, restLabel: '90"', start: '10–12 kg', startKg: 10, note: "Una mano su una panca per l'equilibrio, bacino dritto" }),
+      ex('Iperestensioni 45°', 3, 10, 12, { rest: 90, restLabel: '90"', start: '10–14 kg', startKg: 10, note: 'Piedi ruotati in fuori, schiena leggermente curva' }),
+      ex('Leg curl seduto', 3, 10, 10, { rest: 90, restLabel: '90"', start: '22 kg', startKg: 22, note: 'Discesa lenta' }),
+      ex('Slanci laterali cavo', 3, 12, 12, { unit: 'g', rest: 60, restLabel: '60"', start: '7,5 kg', startKg: 7.5, note: 'Movimento lento, busto fermo' }),
     ],
   },
   {
     id: 'tpl-d', code: 'D', name: 'Spalle + braccia', kind: 'strength',
     exercises: [
-      ['Shoulder press 75°', 3, 8, 10, ''],
-      ['Alzate laterali', 4, 10, 12, ''],
-      ['Laterali su fianco 45°', 2, 12, 12, 'b'],
-      ['Chest press', 3, 8, 10, ''],
-      ['Face pull corda', 3, 12, 12, ''],
-      ['Pushdown corda', 3, 10, 12, ''],
-      ['French press cavo', 3, 10, 10, ''],
+      ex('Shoulder press 75°', 3, 8, 10, { rest: 120, restLabel: "2'", start: '7 kg', startKg: 7, note: 'Resta su 7 kg finché fai 10 in tutte le serie' }),
+      ex('Alzate laterali', 4, 10, 12, { rest: 75, restLabel: '60-90"', start: '3 kg', startKg: 3, note: 'Resta su 3 kg finché fai 12 in tutte le serie' }),
+      ex('Face pull corda', 3, 12, 12, { rest: 60, restLabel: '60"', start: '13–14 kg', startKg: 13, note: 'Corda verso la fronte, gomiti aperti' }),
+      ex('Pushdown corda', 3, 10, 12, { rest: 90, restLabel: '90"', start: '13 kg', startKg: 13, note: 'Gomiti incollati ai fianchi', superset: 'ss-d' }),
+      ex('Hammer curl', 3, 10, 10, { rest: 90, restLabel: '90"', note: 'Presa a martello', superset: 'ss-d' }),
+      ex('French press cavo', 3, 10, 10, { rest: 60, restLabel: '60"', start: '9 kg', startKg: 9, note: 'Di spalle al cavo, braccia sopra la testa' }),
+      ex('Flessioni presa stretta', 3, 6, 10, { rest: 75, restLabel: '60-90"', start: 'Corpo libero', bodyweight: true, max: true, note: 'Gomiti stretti; se troppo dure mani su panca o ginocchia a terra' }),
     ],
   },
   {
@@ -69,6 +81,7 @@ const SEED = [
       '- Settimane 1-2: 6 × 2\' corsa + 2\' cammino',
       '- Settimane 3-4: 6 × 3\' corsa + 1\'30" cammino',
       '- Settimana 5: 4 × 5\' corsa + 1\'30" cammino',
+      '- Settimana 6: 5 × 2\' corsa + 2\' cammino, niente circuito',
       '',
       'Circuito · 3 giri, 40" lavoro / 20" pausa',
       '- Kettlebell swing',
@@ -78,6 +91,25 @@ const SEED = [
     ].join('\n'),
   },
 ];
+
+/* --- Nuovo blocco --------------------------------------------------------- */
+
+/** Inizio del Blocco 2 (modificabile poi dall'app). */
+export const BLOCK2_START = '2026-11-17';
+export const BLOCK2_WEEKS = 6;
+
+/** Esercizi rinominati: lo storico del vecchio nome passa al nuovo. */
+const LINKS = [
+  ['Dip', 'Dip su panca'],
+  ['Curl con bilanciere EZ', 'Curl bilanciere EZ'],
+];
+
+/** Nome confrontabile: minuscolo, senza accenti e spazi doppi. */
+const norm = (str) => String(str || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** Esercizio della scheda a partire dalla definizione (con l'id della libreria). */
+const fromSeed = (e, exercise) => ({ ...e, exerciseId: exercise.id, name: exercise.name });
 
 export const UNIT_LABEL = { '': '', g: 'per gamba', b: 'per braccio' };
 export const UNIT_SHORT = { '': '', g: 'gamba', b: 'braccio' };
@@ -106,7 +138,16 @@ export function repRange(min, max) {
 /** "4 × 6–8 per gamba" */
 export function targetText(t) {
   const unit = UNIT_LABEL[t.unit || ''];
-  return `${t.sets} × ${repRange(t.repMin, t.repMax)}${unit ? ` ${unit}` : ''}`;
+  const reps = t.max ? `max (${repRange(t.repMin, t.repMax)})` : repRange(t.repMin, t.repMax);
+  return `${t.sets} × ${reps}${unit ? ` ${unit}` : ''}`;
+}
+
+/** Recupero leggibile: "2-3'", "90\"" (dal testo della scheda o dai secondi). */
+export function restText(e) {
+  if (!e) return '';
+  if (e.restLabel) return e.restLabel;
+  if (!e.rest) return '';
+  return e.rest % 60 === 0 ? `${e.rest / 60}'` : e.rest > 60 ? `${Math.floor(e.rest / 60)}'${e.rest % 60}"` : `${e.rest}"`;
 }
 
 /** Note del cardio in HTML: titoli e liste puntate. */
@@ -159,16 +200,128 @@ export async function seedTemplates() {
       order: i,
       notes: s.notes || '',
       createdAt: Date.now(),
-      exercises: (s.exercises || []).map(([name, sets, repMin, repMax, unit]) => {
-        const e = ensure(name);
-        return { exerciseId: e.id, name: e.name, sets, repMin, repMax, unit };
-      }),
+      exercises: (s.exercises || []).map((e) => fromSeed(e, ensure(e.name))),
     }));
 
     if (created.length) await db.putMany('exercises', created);
     await db.putMany('templates', list);
+    // Prima installazione: si parte direttamente dal blocco attuale
+    if (!(await db.getMeta('block2Migrated'))) {
+      await saveBlocks([{ id: 'b2', name: 'Blocco 2', start: todayISO(), weeks: BLOCK2_WEEKS }], {});
+      await db.setMeta('block2Migrated', true);
+    }
   }
   await db.setMeta('templatesSeeded', true);
+}
+
+/**
+ * Passaggio al Blocco 2 (una sola volta).
+ * - copia di sicurezza di schede e libreria in meta "backupBeforeBlock2"
+ * - le schede A–D attuali vengono archiviate come "Blocco 1"
+ * - "Dip" → "Dip su panca" e "Curl con bilanciere EZ" → "Curl bilanciere EZ":
+ *   stesso esercizio, quindi storico, ultima volta e massimo restano collegati
+ * - le schede A–D prendono i nuovi esercizi, mantenendo la stessa identità:
+ *   gli allenamenti già fatti questa settimana continuano a contare
+ * - gli esercizi già presenti in libreria (stesso nome) mantengono il loro
+ *   storico; gli allenamenti registrati non vengono modificati
+ */
+export async function migrateToBlock2() {
+  if (await db.getMeta('block2Migrated')) return false;
+  const [current, lib, workouts] = await Promise.all([
+    db.getAll('templates'), db.getAll('exercises'), db.getAll('workouts'),
+  ]);
+  if (!current.length) return false; // ci pensa seedTemplates
+
+  await db.setMeta('backupBeforeBlock2', {
+    at: new Date().toISOString(), templates: current, exercises: lib,
+  });
+
+  const byName = new Map(lib.map((e) => [norm(e.name), e]));
+  const changedWorkouts = new Map();
+  const renameInWorkouts = (fromId, to) => {
+    for (const w of workouts) {
+      for (const entry of w.exercises || []) {
+        if (entry.exerciseId === fromId) {
+          entry.exerciseId = to.id;
+          entry.name = to.name;
+          changedWorkouts.set(w.id, w);
+        }
+      }
+    }
+  };
+
+  // Esercizi collegati (rinominati)
+  for (const [oldName, newName] of LINKS) {
+    const old = byName.get(norm(oldName));
+    if (!old) continue;
+    const existing = byName.get(norm(newName));
+    if (existing && existing.id !== old.id) {
+      // Esistono entrambi: lo storico del vecchio passa al nuovo
+      renameInWorkouts(old.id, existing);
+      await db.del('exercises', old.id);
+    } else {
+      old.name = newName;
+      await db.put('exercises', old);
+      byName.set(norm(newName), old);
+      renameInWorkouts(old.id, old);
+    }
+    byName.delete(norm(oldName));
+  }
+  if (changedWorkouts.size) await db.putMany('workouts', [...changedWorkouts.values()]);
+
+  // Esercizi delle nuove schede: quelli già in libreria tengono il loro id
+  const created = [];
+  const ensure = (name) => {
+    let e = byName.get(norm(name));
+    if (!e) {
+      e = { id: db.uid(), name, createdAt: Date.now() + created.length };
+      byName.set(norm(name), e);
+      created.push(e);
+    }
+    return e;
+  };
+
+  const strengthOld = current.filter((t) => t.kind !== 'cardio');
+  const updated = SEED.filter((s) => s.kind !== 'cardio').map((s, i) => {
+    const prev = current.find((t) => t.id === s.id) || current.find((t) => t.code === s.code);
+    return {
+      ...(prev || {}),
+      id: prev?.id || s.id,
+      code: s.code,
+      name: s.name,
+      kind: 'strength',
+      order: prev?.order ?? i,
+      notes: prev?.notes || '',
+      createdAt: prev?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+      exercises: s.exercises.map((e) => fromSeed(e, ensure(e.name))),
+    };
+  });
+  if (created.length) await db.putMany('exercises', created);
+  await db.putMany('templates', updated);
+
+  // Cardio: aggiunge la settimana 6 al programma se manca (il resto non cambia)
+  const cardio = current.find((t) => t.kind === 'cardio');
+  if (cardio && !/settimana 6/i.test(cardio.notes || '')) {
+    cardio.notes = (cardio.notes || '').replace(
+      /(Settimana 5:[^\n]*)/i,
+      "$1\n- Settimana 6: 5 × 2' corsa + 2' cammino, niente circuito",
+    );
+    await db.put('templates', cardio);
+  }
+
+  // Blocchi: il primo allenamento segna l'inizio del Blocco 1
+  const first = workouts.filter((w) => w.status !== 'active').map((w) => w.date).sort()[0];
+  const list = [];
+  const archive = {};
+  if (first && first < BLOCK2_START) {
+    list.push({ id: 'b1', name: 'Blocco 1', start: first, weeks: null });
+    archive.b1 = strengthOld;
+  }
+  list.push({ id: 'b2', name: 'Blocco 2', start: BLOCK2_START, weeks: BLOCK2_WEEKS });
+  await saveBlocks(list, archive);
+  await db.setMeta('block2Migrated', true);
+  return true;
 }
 
 /** Quando un esercizio viene rinominato in libreria, aggiorna anche le schede. */
@@ -227,7 +380,7 @@ function editTemplate(t, onChange) {
         <span class="row-icon num">${i + 1}</span>
         <span class="row-main">
           <span class="row-title">${esc(e.name)}</span>
-          <span class="row-sub num">${esc(targetText(e))}</span>
+          <span class="row-sub num">${esc(targetText(e))}${restText(e) ? ` · rec. ${esc(restText(e))}` : ''}${e.superset ? ' · superserie' : ''}</span>
         </span>
         <span class="row-trail">${icon('chevron-right')}</span>
       </button>`).join('');
@@ -303,7 +456,17 @@ function editTemplate(t, onChange) {
 /** Foglio per serie, ripetizioni e lato di un esercizio della scheda. */
 function editTemplateExercise(t, i, onChange) {
   const ex = t.exercises[i];
-  const draft = { sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax, unit: ex.unit || '' };
+  const draft = {
+    sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax, unit: ex.unit || '',
+    rest: ex.rest || 75, bodyweight: Boolean(ex.bodyweight), max: Boolean(ex.max),
+  };
+  const next = t.exercises[i + 1];
+  const inSuperset = Boolean(ex.superset && next && next.superset === ex.superset);
+  const switchRow = (key, label, sub, on) => `
+    <label class="switch-row">
+      <span class="row-main"><span class="row-title">${label}</span><span class="row-sub">${sub}</span></span>
+      <input type="checkbox" class="switch" data-sw="${key}" ${on ? 'checked' : ''}>
+    </label>`;
 
   const stepperField = (key, label) => `
     <label class="field">
@@ -331,6 +494,27 @@ function editTemplateExercise(t, i, onChange) {
           <button data-value="b" class="${draft.unit === 'b' ? 'active' : ''}">Per braccio</button>
         </div>
       </div>
+      <label class="field">
+        <span class="field-label">Recupero (secondi)</span>
+        <div class="stepper" data-k="rest" style="height:48px">
+          <button data-d="-15" aria-label="Diminuisci">${icon('minus')}</button>
+          <input type="text" inputmode="numeric" value="${draft.rest}" autocomplete="off">
+          <button data-d="15" aria-label="Aumenta">${icon('plus')}</button>
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Carico di partenza <span class="opt">· facoltativo</span></span>
+        <input class="input" data-start value="${esc(ex.start || '')}" maxlength="40" placeholder="Es. 12 kg" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="field-label">Nota <span class="opt">· facoltativa</span></span>
+        <textarea class="input" data-note rows="2" maxlength="200" placeholder="Es. discesa lenta">${esc(ex.note || '')}</textarea>
+      </label>
+      <div class="list switch-list" style="margin-bottom:var(--s-3)">
+        ${switchRow('bodyweight', 'Corpo libero', 'Kg facoltativi: vuoto = corpo libero', draft.bodyweight)}
+        ${switchRow('max', 'Ripetizioni al massimo', 'Obiettivo "max", es. max (6–10)', draft.max)}
+        ${next ? switchRow('superset', 'Superserie con il successivo', `Alterna le serie con ${esc(next.name)}; recupero dopo la coppia`, inSuperset) : ''}
+      </div>
       <p class="footnote" data-preview style="margin-top:0"></p>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" data-save>${icon('check')} Salva</button>
@@ -349,6 +533,7 @@ function editTemplateExercise(t, i, onChange) {
     draft.sets = Math.min(10, Math.max(1, draft.sets || 1));
     draft.repMin = Math.min(100, Math.max(1, draft.repMin || 1));
     draft.repMax = Math.min(100, Math.max(1, draft.repMax || 1));
+    draft.rest = Math.min(600, Math.max(15, draft.rest || 15));
   };
   const sync = (changed) => {
     clamp();
@@ -356,7 +541,7 @@ function editTemplateExercise(t, i, onChange) {
     if (draft.repMax < draft.repMin) {
       if (changed === 'repMax') draft.repMin = draft.repMax; else draft.repMax = draft.repMin;
     }
-    ['sets', 'repMin', 'repMax'].forEach((k) => { if (k !== changed || document.activeElement !== input(k)) input(k).value = draft[k]; });
+    ['sets', 'repMin', 'repMax', 'rest'].forEach((k) => { if (k !== changed || document.activeElement !== input(k)) input(k).value = draft[k]; });
     preview();
   };
 
@@ -381,9 +566,31 @@ function editTemplateExercise(t, i, onChange) {
   initSeg($('[data-unit]', body), (v) => { draft.unit = v; preview(); });
   preview();
 
+  body.addEventListener('change', (e) => {
+    const sw = e.target.dataset?.sw;
+    if (sw === 'bodyweight' || sw === 'max') { draft[sw] = e.target.checked; preview(); }
+  });
+
   $('[data-save]', body).addEventListener('click', async () => {
     sync();
+    // Il recupero scritto a mano sostituisce il testo della scheda (es. "2-3'")
+    if (draft.rest !== (ex.rest || 75)) ex.restLabel = '';
     Object.assign(ex, draft);
+    ex.start = $('[data-start]', body).value.trim();
+    const kg = parseFloat(ex.start.replace(',', '.'));
+    ex.startKg = Number.isFinite(kg) ? kg : null;
+    ex.note = $('[data-note]', body).value.trim();
+    const ss = $('[data-sw="superset"]', body);
+    if (ss) {
+      if (ss.checked) {
+        const id = ex.superset || next.superset || `ss-${Date.now().toString(36)}`;
+        ex.superset = id;
+        next.superset = id;
+      } else if (inSuperset) {
+        ex.superset = '';
+        next.superset = '';
+      }
+    }
     await saveTemplate(t);
     s.close();
     onChange();

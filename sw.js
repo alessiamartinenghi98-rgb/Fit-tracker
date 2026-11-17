@@ -10,7 +10,7 @@
    l'aggiornamento su tutti i dispositivi.
    ========================================================================== */
 
-const CACHE_VERSION = 'v11';
+const CACHE_VERSION = 'v12';
 const CACHE_NAME = `fit-tracker-${CACHE_VERSION}`;
 
 // Percorsi relativi: funzionano anche nella sottocartella di GitHub Pages
@@ -33,6 +33,7 @@ const APP_FILES = [
   './js/treadmill.js',
   './js/motivation.js',
   './js/report.js',
+  './js/blocks.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

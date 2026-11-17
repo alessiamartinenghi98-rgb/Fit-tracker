@@ -3783,3 +3783,173 @@ input[type="date"]::-webkit-date-and-time-value {
 [hidden] {
   display: none !important;
 }
+
+/* 14. BLOCCHI, SUPERSERIE, INDICAZIONI DELLA SCHEDA ------------------------ */
+
+/* Card del blocco: "Blocco 2 · Settimana 1 di 6" con sei segmenti */
+.block-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  text-align: left;
+  margin-bottom: var(--s-2);
+}
+
+.block-card .row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.block-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.block-card .row-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.block-week {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.block-segs {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin: var(--s-2) 0 6px;
+}
+
+.block-segs i {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+}
+
+.block-segs i.done {
+  background: rgba(198, 244, 50, 0.45);
+}
+
+.block-segs i.now {
+  background: var(--accent);
+}
+
+/* La settimana di scarico è tratteggiata finché non arriva */
+.block-segs i.deload:not(.done):not(.now) {
+  background: repeating-linear-gradient(90deg, var(--surface-3) 0 4px, transparent 4px 7px);
+}
+
+.block-card .row-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.block-card.deload .row-sub {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.block-card .row-trail {
+  color: var(--text-3);
+  display: flex;
+}
+
+/* Recupero e note dell'esercizio */
+.ex-target {
+  flex-wrap: wrap;
+}
+
+.ex-rest {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--separator-strong);
+}
+
+.ex-note {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.hint-pill.start {
+  background: var(--surface-2);
+  color: var(--text);
+  margin-right: 6px;
+}
+
+.hint-pill.start svg.lucide {
+  color: var(--accent);
+}
+
+/* Superserie: due esercizi nello stesso riquadro */
+.superset {
+  border: 1px solid rgba(198, 244, 50, 0.3);
+  border-radius: var(--r-xl);
+  padding: var(--s-2);
+  margin-top: var(--s-3);
+  background: rgba(198, 244, 50, 0.04);
+}
+
+.superset .ex-card {
+  margin-top: var(--s-2);
+}
+
+.ss-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--s-2) 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.ss-head b {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.ss-head svg.lucide {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ss-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 800;
+  vertical-align: 2px;
+}
+
+.section-label .opt {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.superset + .card {
+  margin-top: var(--s-3);
+}

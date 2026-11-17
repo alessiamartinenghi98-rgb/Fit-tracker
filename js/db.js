@@ -168,11 +168,11 @@ export async function isPersisted() {
 /* --- Backup: esportazione e importazione JSON --------------------------- */
 
 const BACKUP_APP = 'fit-tracker';
-const BACKUP_VERSION = 3; // v2: + schede · v3: + acqua, piano e diario della dieta
+const BACKUP_VERSION = 4; // v2: + schede · v3: + acqua, piano e diario della dieta · v4: + blocchi
 
 /** Crea l'oggetto di backup con tutti i dati. */
 export async function exportData() {
-  const [exercises, workouts, meals, templates, water, dietDays, dietPlan] = await Promise.all([
+  const [exercises, workouts, meals, templates, water, dietDays, dietPlan, blocks, blockTemplates] = await Promise.all([
     getAll('exercises'),
     getAll('workouts'),
     getAll('meals'),
@@ -180,12 +180,14 @@ export async function exportData() {
     getAll('water'),
     getAll('dietDays'),
     getMeta('dietPlan'),
+    getMeta('blocks'),
+    getMeta('blockTemplates'),
   ]);
   return {
     app: BACKUP_APP,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    data: { exercises, workouts, meals, templates, water, dietDays, dietPlan },
+    data: { exercises, workouts, meals, templates, water, dietDays, dietPlan, blocks, blockTemplates },
   };
 }
 
@@ -197,7 +199,9 @@ export async function importData(backup) {
   if (!backup || backup.app !== BACKUP_APP || typeof backup.data !== 'object') {
     throw new Error('Il file non è un backup di Fit Tracker.');
   }
-  const { exercises = [], workouts = [], meals = [], templates, water, dietDays, dietPlan } = backup.data;
+  const {
+    exercises = [], workouts = [], meals = [], templates, water, dietDays, dietPlan, blocks, blockTemplates,
+  } = backup.data;
   const optional = [templates, water, dietDays].filter((x) => x !== undefined);
   if (![exercises, workouts, meals, ...optional].every(Array.isArray)) {
     throw new Error('Il backup è danneggiato.');
@@ -214,14 +218,27 @@ export async function importData(backup) {
   if (templates && templates.length) lists.templates = templates;
   if (water) lists.water = water;
   if (dietDays) lists.dietDays = dietDays;
-  const stores = [...Object.keys(lists), ...(dietPlan ? ['meta'] : [])];
+  // Blocchi: un backup senza blocchi (precedente al Blocco 2) viene riaggiornato
+  // al nuovo blocco alla riapertura, partendo dalle sue schede
+  const withBlocks = Array.isArray(blocks) && blocks.length > 0;
+  const stores = [...Object.keys(lists), 'meta'];
   await tx(stores, 'readwrite', (t) => {
     for (const name of Object.keys(lists)) {
       const s = t.objectStore(name);
       s.clear();
       lists[name].forEach((item) => s.put(item));
     }
-    if (dietPlan) t.objectStore('meta').put({ key: 'dietPlan', value: dietPlan });
+    const meta = t.objectStore('meta');
+    if (dietPlan) meta.put({ key: 'dietPlan', value: dietPlan });
+    if (withBlocks) {
+      meta.put({ key: 'blocks', value: blocks });
+      meta.put({ key: 'blockTemplates', value: blockTemplates || {} });
+      meta.put({ key: 'block2Migrated', value: true });
+    } else if (templates && templates.length) {
+      meta.delete('blocks');
+      meta.delete('blockTemplates');
+      meta.delete('block2Migrated');
+    }
   });
   return { exercises: exercises.length, workouts: workouts.length, meals: meals.length };
 }
