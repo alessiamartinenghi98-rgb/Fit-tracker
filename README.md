@@ -19,6 +19,10 @@ HTML, CSS e JavaScript puri: nessun build step, funziona direttamente su GitHub 
   superserie, esercizi a corpo libero (kg facoltativi), recupero e nota per esercizio, carico di partenza
   consigliato fino alla prima sessione del blocco, ultima volta e massimo storico su ogni esercizio.
   Cardio del sabato con spunte facoltative (cammina-corri, giri del circuito, kg).
+- **Corsa, camminata, bici**: km facoltativi con passo (min/km) o velocità calcolati dalla durata.
+- **Promemoria carichi**: quando completi tutte le serie al massimo delle ripetizioni compare
+  "Tutte le ripetizioni fatte: la prossima volta aumenta il carico"; la volta dopo, "Aumenta il peso"
+  con il peso e le ripetizioni dell'ultima volta.
 - **Dieta**: piano settimanale modificabile, opzioni di colazione e spuntino (modificabili),
   categorie di pranzo e cena con contatori e avvisi,
   sgarri, promemoria del carbo, settimane precedenti con riepilogo, regole e porzioni.

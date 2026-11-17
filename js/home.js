@@ -17,7 +17,7 @@ import { strengthTemplates, cardioTemplate } from './templates.js';
 import {
   openStartSheet, resumeActive, startTemplate, activeBanner, suggestedTemplate,
   openWorkoutRecord, openActivitySheet, openCardioSheet, getActiveWorkout,
-  isActive, isStrength, isExtra, isCardio, isActivity, workoutLabel, activityType, workoutStats,
+  isActive, isStrength, isExtra, isCardio, isActivity, workoutLabel, activityType, workoutStats, distanceText,
   isPartial, partialText, templateStatusForWeek,
 } from './workouts.js';
 import { WATER_GOAL, WATER_STEP, setWater, liters } from './water.js';
@@ -551,7 +551,7 @@ function dayDetail(date) {
   }).join('');
 
   const workoutRows = workouts.map((w) => {
-    const sub = isActivity(w) ? (w.note || '')
+    const sub = isActivity(w) ? [distanceText(w), w.note].filter(Boolean).join(' · ')
       : isCardio(w) ? 'Cardio del sabato'
         : isPartial(w) ? `Parziale · ${partialText(w)} serie` : `${workoutStats(w).sets} serie`;
     return `

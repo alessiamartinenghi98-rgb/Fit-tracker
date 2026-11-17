@@ -120,9 +120,28 @@ export const ACTIVITY_TYPES = [
 ];
 export const activityType = (id) => ACTIVITY_TYPES.find((a) => a.id === id) || ACTIVITY_TYPES[4];
 
-/** Breve descrizione per Home e calendario, es. "Corsa · 30 min". */
+/** Tipi con la distanza: passo (min/km) a piedi, velocità in bici. */
+const DISTANCE_TYPES = ['corsa', 'camminata', 'bici'];
+export const hasDistance = (activity) => DISTANCE_TYPES.includes(activity);
+
+/** Passo o velocità da durata (minuti) e km: "6'00\"/km" oppure "24 km/h". */
+export function paceText(activity, minutes, km) {
+  if (!minutes || !km || !hasDistance(activity)) return '';
+  if (activity === 'bici') return `${fmtNum(Math.round((km / (minutes / 60)) * 10) / 10)} km/h`;
+  const total = Math.round((minutes * 60) / km); // secondi per km
+  return `${Math.floor(total / 60)}'${String(total % 60).padStart(2, '0')}"/km`;
+}
+
+/** "5 km · 6'00\"/km" per storico, Home e report. */
+export function distanceText(w) {
+  if (!w.km || !hasDistance(w.activity)) return '';
+  const pace = paceText(w.activity, w.duration, w.km);
+  return `${fmtNum(w.km)} km${pace ? ` · ${w.activity === 'bici' ? '' : 'passo '}${pace}` : ''}`;
+}
+
+/** Breve descrizione per Home e calendario, es. "Corsa · 30 min · 5 km". */
 export function workoutLabel(w) {
-  if (isActivity(w)) return `${activityType(w.activity).label}${w.duration ? ` · ${w.duration} min` : ''}`;
+  if (isActivity(w)) return `${activityType(w.activity).label}${w.duration ? ` · ${w.duration} min` : ''}${w.km && hasDistance(w.activity) ? ` · ${fmtNum(w.km)} km` : ''}`;
   if (isCardio(w)) return w.name || 'Cardio';
   return `${w.templateCode ? `${w.templateCode} · ` : ''}${w.name || 'Allenamento'}`;
 }
@@ -269,8 +288,29 @@ function shouldIncrease(entry, current) {
   if (!target || !target.repMax) return false;
   const last = lastPerformance(entry.exerciseId, current);
   if (!last) return false;
-  const top = (last.entry.target || target).repMax || target.repMax;
-  return last.sets.length > 0 && last.sets.every((s) => s.reps >= top);
+  const lastTarget = last.entry.target || target;
+  const top = lastTarget.repMax || target.repMax;
+  // Tutte le serie previste fatte, tutte al massimo delle ripetizioni
+  const planned = last.entry.target?.sets || 1;
+  return last.sets.length >= planned && last.sets.every((s) => s.reps >= top);
+}
+
+/**
+ * Nell'allenamento aperto: tutte le serie dell'esercizio completate e tutte
+ * al massimo delle ripetizioni dell'obiettivo → la prossima volta più carico.
+ */
+function allRepsDone(entry) {
+  const top = entry.target?.repMax;
+  if (!top || !entry.sets.length) return false;
+  return entry.sets.every((s) => s.done && (s.reps || 0) >= top);
+}
+
+/** Promemoria nella card: "Tutte le ripetizioni fatte: la prossima volta aumenta il carico". */
+function nextLoadHint(entry) {
+  const bw = Boolean(entry.target?.bodyweight);
+  return `<div class="hint-pill next" data-next-hint>${icon('circle-check-big')} ${bw
+    ? 'Tutte le ripetizioni fatte: la prossima volta rendilo più difficile'
+    : 'Tutte le ripetizioni fatte: la prossima volta aumenta il carico'}</div>`;
 }
 
 /* ==========================================================================
@@ -567,6 +607,7 @@ function activityCard(w) {
         </div>
         <div class="wc-date">${esc(formatDay(w.date))}</div>
       </div>
+      ${distanceText(w) ? `<div class="wc-ex"><span>${esc(distanceText(w))}</span></div>` : ''}
       ${w.note ? `<div class="wc-ex"><span>${esc(w.note)}</span></div>` : ''}
       ${treadmillLine(w)}
     </article>`;
@@ -719,8 +760,8 @@ function entryFromTemplate(te, workout) {
  */
 export function openActivitySheet(existing = null, { date } = {}) {
   const draft = existing
-    ? { activity: existing.activity, duration: existing.duration || 30, note: existing.note || '', date: existing.date }
-    : { activity: 'corsa', duration: 30, note: '', date: safeDate(date) };
+    ? { activity: existing.activity, duration: existing.duration || 30, km: existing.km ?? null, note: existing.note || '', date: existing.date }
+    : { activity: 'corsa', duration: 30, km: null, note: '', date: safeDate(date) };
 
   const s = openSheet({
     title: existing ? 'Allenamento libero' : 'Nuovo allenamento libero',
@@ -746,6 +787,20 @@ export function openActivitySheet(existing = null, { date } = {}) {
           <input class="input" type="date" data-date value="${draft.date}" max="${todayISO()}">
         </label>
       </div>
+      <div class="grid-2" data-distance ${hasDistance(draft.activity) ? '' : 'hidden'}>
+        <label class="field">
+          <span class="field-label">Km <span class="opt">· facoltativi</span></span>
+          <div class="stepper" data-km style="height:48px">
+            <button data-k="-0.5" aria-label="Meno mezzo chilometro">${icon('minus')}</button>
+            <input type="text" inputmode="decimal" value="${fmtNum(draft.km)}" placeholder="–" autocomplete="off">
+            <button data-k="0.5" aria-label="Più mezzo chilometro">${icon('plus')}</button>
+          </div>
+        </label>
+        <div class="field">
+          <span class="field-label" data-pace-label>${draft.activity === 'bici' ? 'Velocità' : 'Passo'}</span>
+          <div class="pace-box num" data-pace>–</div>
+        </div>
+      </div>
       <label class="field">
         <span class="field-label">Nota <span class="opt">· facoltativa</span></span>
         <textarea class="input" data-note rows="2" maxlength="200" placeholder="Es. 5 km al parco, ritmo tranquillo">${esc(draft.note)}</textarea>
@@ -760,13 +815,24 @@ export function openActivitySheet(existing = null, { date } = {}) {
 
   const body = s.body;
   const durInput = $('[data-duration] input', body);
+  const kmInput = $('[data-km] input', body);
   const tmValue = sheetTreadmill(body, existing);
+
+  // Passo (o velocità in bici) calcolato da durata e km
+  const refreshPace = () => {
+    const pace = paceText(draft.activity, parseInt(durInput.value, 10), draft.km);
+    $('[data-pace]', body).textContent = pace || '–';
+    $('[data-pace-label]', body).textContent = draft.activity === 'bici' ? 'Velocità' : 'Passo';
+    $('[data-distance]', body).hidden = !hasDistance(draft.activity);
+  };
+  refreshPace();
 
   $('[data-types]', body).addEventListener('click', (e) => {
     const chip = e.target.closest('[data-type]');
     if (!chip) return;
     draft.activity = chip.dataset.type;
     body.querySelectorAll('[data-type]').forEach((c) => c.classList.toggle('active', c === chip));
+    refreshPace();
     haptic(5);
   });
   $('[data-duration]', body).addEventListener('click', (e) => {
@@ -775,8 +841,25 @@ export function openActivitySheet(existing = null, { date } = {}) {
     e.preventDefault();
     draft.duration = Math.max(5, Math.min(600, (parseInt(durInput.value, 10) || 0) + Number(b.dataset.d)));
     durInput.value = draft.duration;
+    refreshPace();
     haptic(5);
   });
+  durInput.addEventListener('input', refreshPace);
+  $('[data-km]', body).addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    e.preventDefault();
+    draft.km = Math.max(0, Math.min(300, Math.round(((draft.km || 0) + Number(b.dataset.k)) * 100) / 100)) || null;
+    kmInput.value = fmtNum(draft.km);
+    refreshPace();
+    haptic(5);
+  });
+  kmInput.addEventListener('input', () => {
+    const n = parseNum(kmInput.value);
+    draft.km = n && n > 0 ? Math.min(300, n) : null;
+    refreshPace();
+  });
+  kmInput.addEventListener('focus', () => setTimeout(() => kmInput.setSelectionRange(0, kmInput.value.length), 0));
 
   $('[data-save]', body).addEventListener('click', async () => {
     const duration = parseInt(durInput.value, 10);
@@ -787,6 +870,7 @@ export function openActivitySheet(existing = null, { date } = {}) {
       activity: draft.activity,
       name: activityType(draft.activity).label,
       duration: Math.min(600, duration),
+      km: hasDistance(draft.activity) && draft.km ? draft.km : null,
       note: $('[data-note]', body).value.trim(),
       date: safeDate($('[data-date]', body).value),
       updatedAt: now,
@@ -1167,6 +1251,14 @@ function exerciseCard(entry, i, isNew, ssTag = '') {
   const increase = shouldIncrease(entry, state.current);
   const unit = t ? UNIT_SHORT[t.unit || ''] : '';
   const startHint = showStartHint(entry, state.current);
+  let increaseText = '';
+  if (increase && last) {
+    const top = Math.max(...last.sets.map((x) => x.weight || 0));
+    const reps = Math.min(...last.sets.map((x) => x.reps)); // le ripetizioni fatte davvero (almeno il massimo)
+    increaseText = bw && !top
+      ? `Pronto a progredire: l'ultima volta ${reps} ripetizioni in tutte le serie`
+      : `Aumenta il peso: l'ultima volta ${fmtNum(top)} kg × ${reps} in tutte le serie`;
+  }
 
   return `
     <div class="card ex-card" data-ex="${i}" ${isNew ? '' : 'style="animation:none"'}>
@@ -1178,7 +1270,8 @@ function exerciseCard(entry, i, isNew, ssTag = '') {
           ${bestLine}
           ${entry.note ? `<div class="ex-note">${esc(entry.note)}</div>` : ''}
           ${startHint ? `<div class="hint-pill start">${icon('flag')} Partenza consigliata: ${esc(entry.start)}</div>` : ''}
-          ${increase ? `<div class="hint-pill">${icon('trending-up')} ${bw ? 'Pronto a progredire' : 'Aumenta il peso'}</div>` : ''}
+          ${increase ? `<div class="hint-pill">${icon('trending-up')} ${esc(increaseText)}</div>` : ''}
+          ${allRepsDone(entry) ? nextLoadHint(entry) : ''}
         </div>
         <button class="ex-menu" data-action="ex-menu" aria-label="Opzioni esercizio">${icon('ellipsis')}</button>
       </div>
@@ -1480,6 +1573,8 @@ function toggleSet(exIndex, setIndex) {
     return;
   }
 
+  const entry = state.current.exercises[exIndex];
+  const wasReady = allRepsDone(entry);
   s.done = !s.done;
   if (s.weight === null) s.weight = 0;
   if (document.activeElement) document.activeElement.blur();
@@ -1492,7 +1587,32 @@ function toggleSet(exIndex, setIndex) {
     const rest = restAfterSet(exIndex);
     if (rest) startRest(rest); else stopRest();
   }
+  updateNextLoadHint(exIndex, wasReady);
   saveNow(); // ogni serie è salvata subito
+}
+
+/** Mostra o toglie il promemoria "aumenta il carico" senza ridisegnare la card. */
+function updateNextLoadHint(exIndex, wasReady) {
+  const entry = state.current.exercises[exIndex];
+  const ready = allRepsDone(entry);
+  const card = $(`.ex-card[data-ex="${exIndex}"]`);
+  if (!card) return;
+  const pill = $('[data-next-hint]', card);
+  if (ready && !pill) {
+    $('.ex-head > div', card).insertAdjacentHTML('beforeend', nextLoadHint(entry));
+    $('[data-next-hint]', card).animate(
+      [{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }],
+      { duration: 280, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+    );
+  } else if (!ready && pill) {
+    pill.remove();
+  }
+  if (ready && !wasReady) {
+    haptic([20, 60, 20]);
+    toast(entry.target?.bodyweight
+      ? `${exerciseName(entry)}: tutte le ripetizioni! La prossima volta rendilo più difficile`
+      : `${exerciseName(entry)}: tutte le ripetizioni! La prossima volta aumenta il carico`);
+  }
 }
 
 /**
