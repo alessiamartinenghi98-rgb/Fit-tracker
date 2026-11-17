@@ -128,7 +128,7 @@ export async function openReportSheet() {
 async function shareFile(file) {
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: 'Report allenamenti' });
+      await navigator.share({ files: [file] }); // senza titolo: su iPhone diventerebbe un secondo file
       toast('Report pronto');
     } catch (err) {
       if (err.name !== 'AbortError') throw err;

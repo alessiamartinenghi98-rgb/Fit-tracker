@@ -551,7 +551,7 @@ async function exportBackup() {
     // Su iPhone il foglio di condivisione permette "Salva su File" / iCloud Drive
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
-        await navigator.share({ files: [file], title: 'Backup Fit Tracker' });
+        await navigator.share({ files: [file] }); // senza titolo: su iPhone diventerebbe un secondo file
       } catch (err) {
         if (err.name === 'AbortError') return; // condivisione annullata
         throw err;
