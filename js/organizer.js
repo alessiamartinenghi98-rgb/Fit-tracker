@@ -15,6 +15,7 @@ import {
   $, esc, icon, toast, haptic, openSheet, confirmSheet, todayISO, addDays, startOfWeek, formatShortDate,
 } from './ui.js';
 import { CATEGORIES, WEEKDAYS } from './plan.js';
+import { exportWeekImage } from './weekimage.js';
 import {
   GRID_SLOTS, isMainSlot, blockLabel, breakfastOptions, breakfastText, getWeek, saveWeek, hasWeek, baseWeek,
   targets, used, carbsOfDay,
@@ -120,6 +121,7 @@ function render() {
     <div class="org-actions">
       <button class="chip" data-o="copy">${icon('copy')}Copia settimana scorsa</button>
       <button class="chip" data-o="base">${icon('rotate-ccw')}Schema base</button>
+      <button class="chip" data-o="image">${icon('image-down')}Salva immagine</button>
     </div>
     <div class="org-cols"><span></span>${GRID_SLOTS.map((s) => `<span>${SLOT_LABEL[s]}</span>`).join('')}</div>
     <div class="org-grid">${rows}</div>
@@ -215,6 +217,19 @@ async function changeWeek(delta) {
   haptic(5);
   render();
   $('#diet-organizer').scrollTop = 0;
+}
+
+/** Foto della settimana (solo il calendario), senza cambiare nulla. */
+async function saveImage(btn) {
+  btn.disabled = true;
+  try {
+    await exportWeekImage(st.weekStart, st.days);
+  } catch (err) {
+    console.error(err);
+    toast('Non sono riuscita a creare l\'immagine', { error: true });
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function copyPrevious() {
@@ -334,6 +349,7 @@ function bindOnce(el) {
     if (o === 'next') return changeWeek(1);
     if (o === 'copy') return copyPrevious();
     if (o === 'base') return resetBase();
+    if (o === 'image') return saveImage(e.target.closest('[data-o]'));
 
     const dockBtn = e.target.closest('[data-dock]');
     if (dockBtn) {
